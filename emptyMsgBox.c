@@ -9,13 +9,7 @@ int main(int argc, char ** argv) {
     char msg[50];
     int err;
 
-    printf("putting in this message below\n%s\n\n", in);
-    /* Send a message containing 'in' */
-    err = syscall(__NR_dm510_msgbox_put, in, strlen(in)+1);
-    if (err < 0){
-        errno = -err;
-        perror("put_msg:");
-    }
+    printf("putting in no message.\n");
 
     /* Read a message */
     err = syscall(__NR_dm510_msgbox_get, msg, 50);
@@ -23,6 +17,7 @@ int main(int argc, char ** argv) {
         errno = -err;
         perror("get_msg:");
     }
+        
 
     printf("Below is retrieved message:\n%s\n", msg);
 

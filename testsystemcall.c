@@ -11,13 +11,14 @@ int main(int argc, char ** argv) {
 
     printf("putting in this message below\n%s\n", in);
     /* Send a message containing 'in' */
-    syscall(__NR_dm510_msgbox_put, in, strlen(in)+1);
+    int err1 = syscall(__NR_dm510_msgbox_put, in, strlen(in)+1);
+    if (err1 != 0) printf("%d\n",err1);
 
     printf("Retrieving message\n");
     /* Read a message */
     msglen = syscall(__NR_dm510_msgbox_get, msg, 50);
 
-    printf("Below is retriueved message:\n%s\n", msg);
+    printf("Message Length: %d\nBelow is retrieved message:\n%s\n", msglen, msg);
 
     return 0;
 }
