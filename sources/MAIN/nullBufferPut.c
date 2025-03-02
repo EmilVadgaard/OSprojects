@@ -14,7 +14,7 @@ int main(int argc, char ** argv) {
     err = syscall(__NR_dm510_msgbox_put, NULL, strlen(in)+1);
     if (err < 0){
         errno = -err;
-        perror("get_msg:");
+        perror("put_msg:");
     }
 
     /* Read a message */

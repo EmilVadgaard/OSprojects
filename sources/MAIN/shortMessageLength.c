@@ -13,7 +13,7 @@ int main(int argc, char ** argv) {
     err = syscall(__NR_dm510_msgbox_put, in, strlen(in)-5);
     if (err < 0){
         errno = -err;
-        perror("get_msg:");
+        perror("put_msg:");
     }
 
     /* Read a message */
