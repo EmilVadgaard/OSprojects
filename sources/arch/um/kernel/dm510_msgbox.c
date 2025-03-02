@@ -19,7 +19,8 @@ unsigned long flags;
 
 asmlinkage
 int sys_dm510_msgbox_put( char* buffer , int length ) {
-    if (length < 0 || buffer == NULL) return -EINVAL;
+    if (length < 0) return -EINVAL;
+    if (access_ok(buffer, length) == 0) return -EFAULT;
     msg_t* msg = kmalloc(sizeof(msg_t), GFP_KERNEL);
     if (msg == NULL) return -EFAULT;  
 
@@ -47,7 +48,7 @@ int sys_dm510_msgbox_put( char* buffer , int length ) {
 
 asmlinkage
 int sys_dm510_msgbox_get( char* buffer , int length ) {
-    if (buffer == NULL) return -EINVAL; // FIX
+    if (access_ok(buffer, length) == 0) return -EFAULT;
     if (top != NULL) {
         local_irq_save(flags);
         /* CRITICAL SECTION */
