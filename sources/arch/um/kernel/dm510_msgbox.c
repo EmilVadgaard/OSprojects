@@ -2,6 +2,8 @@
 #include "linux/unistd.h"
 #include "linux/slab.h"
 #include "linux/uaccess.h"
+#include "linux/errno.h"
+#include "linux/irqflags.h"
 
 typedef struct _msg_t msg_t;
 
@@ -13,20 +15,24 @@ struct _msg_t{
 
 static msg_t *top = NULL;
 
+unsigned long flags;
+
 asmlinkage
 int sys_dm510_msgbox_put( char* buffer , int length ) {
+    if (length < 0 || buffer == NULL) return -EINVAL;
     msg_t* msg = kmalloc(sizeof(msg_t), GFP_KERNEL);
-    if (msg == NULL) return -1;
+    if (msg == NULL) return -EFAULT;  
 
     msg->previous = NULL;
     msg->length = length;
     msg->message = kmalloc(length, GFP_KERNEL);
-    if (msg->message == NULL) return -2;
+    if (msg->message == NULL) return -EFAULT;
 
-    copy_from_user(msg->message, buffer, length);
-    if (msg->message != buffer) return -3;
-    //printk("this is from kernel memory: %s\n", msg->message);
+    int err = copy_from_user(msg->message, buffer, length);
+    if (err != 0) return -EFAULT;
 
+    local_irq_save(flags);
+    /* CRITICAL SECTION */
     if (top == NULL) {
         top = msg;
     } else {
@@ -34,30 +40,37 @@ int sys_dm510_msgbox_put( char* buffer , int length ) {
         msg->previous = top;
         top = msg;
     }
-return 0;
+    /* DONESKI */
+    local_irq_restore(flags);
+    return 0;
 }
 
 asmlinkage
 int sys_dm510_msgbox_get( char* buffer , int length ) {
+    if (buffer == NULL) return -EINVAL; // FIX
     if (top != NULL) {
+        local_irq_save(flags);
+        /* CRITICAL SECTION */
         msg_t* msg = top;
         int mlength = msg->length;
-        top = msg->previous;
     
         if (length < mlength) {
-            return -1;
+            return -EINVAL;
         }
-        
-        //printk("from get function: %s",msg->message);
     
         /* copy message */
-        copy_to_user(buffer, msg->message, mlength);
-    
+        int err = copy_to_user(buffer, msg->message, mlength);
+        if (err != 0) return -EFAULT;
+        top = msg->previous;
+        /* DONESKI */
+        local_irq_restore(flags);
+        
         /* free memory */
         kfree(msg->message);
         kfree(msg);
+        
     
         return mlength;
     }
-return -1;
+return -ENODATA;
 }

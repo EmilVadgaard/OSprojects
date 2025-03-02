@@ -1,5 +1,5 @@
 CC     = gcc
-SRCS   = test1.c test2.c test3.c emptyMsgBox.c incorrectMessageLength.c invalidMessageLength.c nullBufferGet.c nullBufferPut.c
+SRCS   = test1.c test2.c test3.c emptyMsgBox.c shortMessageLength.c longMessageLength.c invalidMessageLength.c nullBufferGet.c nullBufferPut.c shortGetBuffer.c
 
 # Create a list of programs by substituting .c with (no extension)
 # e.g. file1.c => file1
