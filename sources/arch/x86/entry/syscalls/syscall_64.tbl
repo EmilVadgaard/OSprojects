@@ -375,9 +375,8 @@
 451	common	cachestat		sys_cachestat
 452	common	fchmodat2		sys_fchmodat2
 453	64	map_shadow_stack	sys_map_shadow_stack
-454 common  hellokernel             sys_hellokernel
-455 common  dm510_msgbox_get    sys_dm510_msgbox_get
-456 common  dm510_msgbox_put    sys_dm510_msgbox_put
+454 common  dm510_msgbox_get    sys_dm510_msgbox_get
+455 common  dm510_msgbox_put    sys_dm510_msgbox_put
 
 #
 # Due to a historical design error, certain syscalls are numbered differently
