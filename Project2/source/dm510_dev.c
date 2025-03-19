@@ -34,8 +34,13 @@ long dm510_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 #define DEVICE_COUNT 2
 
-#define DM_BUFFER 16
+#define DM_BUFFER 1000
 /* end of what really should have been in a .h file */
+
+#define DM510_IOC_MAGIC 'e'
+
+#define IOC_BUFFERSIZE _IOW(DM510_IOC_MAGIC, 1, int)
+#define IOC_MAX_READERS _IOW(DM510_IOC_MAGIC, 2, int)
 
 /* file operations struct */
 static struct file_operations dm510_fops = {
@@ -44,7 +49,7 @@ static struct file_operations dm510_fops = {
 	.write   = dm510_write,
 	.open    = dm510_open,
 	.release = dm510_release,
-        .unlocked_ioctl   = dm510_ioctl
+    .unlocked_ioctl   = dm510_ioctl
 };
 
 struct DM510_pipe {
@@ -98,6 +103,12 @@ int dm510_init_module( void ) {
 		init_waitqueue_head(&(dm_devices[i].outq));
 		mutex_init(&dm_devices[i].mutex);
 		DM510_cdev_setup(dm_devices + i, i);
+
+		dm_devices[i].buffer = kmalloc(DM_BUFFER, GFP_KERNEL);
+		if (!dm_devices[i].buffer) return -ENOMEM;
+		dm_devices[i].buffersize = DM_BUFFER;
+		dm_devices[i].end = dm_devices[i].buffer + dm_devices[i].buffersize;
+		dm_devices[i].rp = dm_devices[i].wp = dm_devices[i].buffer;
 	}
 	dm_devices[0].other_pipe = &dm_devices[1];
 	dm_devices[1].other_pipe = &dm_devices[0];
@@ -138,18 +149,8 @@ static int dm510_open( struct inode *inode, struct file *filp ) {
 	if (mutex_lock_interruptible(&dev->mutex)) //We aquire device, it is now locked.
 		return -ERESTARTSYS;
 	
-	if (!dev->buffer) { // Check if buffer is empty, if so, cont
-		/* allocate the buffer */
-		dev->buffer = kmalloc(DM_BUFFER, GFP_KERNEL);
-		if (!dev->buffer) {
-			mutex_unlock(&dev->mutex);
-			return -ENOMEM;
-		}
-	}
 	//Now we have allocated memeory for messages.
-	dev->buffersize = DM_BUFFER;
-	dev->end = dev->buffer + dev->buffersize;
-	dev->rp = dev->wp = dev->buffer; /* rd and wr from the beginning */
+	 /* rd and wr from the beginning */
 
 	/* use f_mode,not  f_flags: it's cleaner (fs/open.c tells why) */
 	if (filp->f_mode & FMODE_READ)
@@ -176,10 +177,10 @@ static int dm510_release( struct inode *inode, struct file *filp ) {
 		dev->nreaders--;
 	if (filp->f_mode & FMODE_WRITE)
 		dev->nwriters--;
-	if (dev->nreaders + dev->nwriters == 0) {
-		kfree(dev->buffer);
-		dev->buffer = NULL; /* the other fields are not checked on open */
-	}
+//	if (dev->nreaders + dev->nwriters == 0) {
+//		kfree(dev->buffer);
+//		dev->buffer = NULL; /* the other fields are not checked on open */
+//	}
 	mutex_unlock(&dev->mutex);
 	return 0;
 	/* device release code belongs here */
@@ -301,6 +302,40 @@ static ssize_t dm510_write( struct file *filp,
 	return count;
 }
 
+static long set_buffer(struct DM510_pipe *dev, unsigned long arg){
+
+	int new_size;
+
+	if (copy_from_user(&new_size, (int __user *)arg, sizeof(new_size))) {
+		return -EFAULT;
+	}
+
+	if (mutex_lock_interruptible(&dev->mutex))
+            return -ERESTARTSYS;
+
+	if (dev->buffer) {
+		kfree(dev->buffer);
+		dev->buffer = NULL;
+	}
+
+	dev->buffer = kmalloc(new_size, GFP_KERNEL);
+	if (!dev->buffer) {
+		mutex_unlock(&dev->mutex);
+		printk(KERN_ERR "dm510: failed to allocate new buffer of size=%d\n", new_size);
+		return -ENOMEM;
+	}
+
+	dev->buffersize = new_size;
+    dev->end = dev->buffer + new_size;
+    dev->rp = dev->wp = dev->buffer;
+
+    mutex_unlock(&dev->mutex);
+
+    printk(KERN_INFO "dm510: buffer resized to %d\n", new_size);
+
+	return 0;
+}
+
 /* called by system call icotl */ 
 long dm510_ioctl( 
     struct file *filp, 
@@ -308,6 +343,19 @@ long dm510_ioctl(
     unsigned long arg ) /* argument of the command */
 {
 	/* ioctl code belongs here */
+	struct DM510_pipe *dev = filp->private_data;
+	int err;
+
+	switch (cmd) {
+		case IOC_BUFFERSIZE:
+			err = set_buffer(dev, arg);
+			if (err)
+				return err;
+			break;
+		default:
+			return -EINVAL;
+	}
+
 	printk(KERN_INFO "DM510: ioctl called.\n");
 
 	return 0; //has to be changed
