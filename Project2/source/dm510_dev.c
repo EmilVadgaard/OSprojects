@@ -37,10 +37,21 @@ long dm510_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 #define DM_BUFFER 1000
 /* end of what really should have been in a .h file */
 
+/*
+ * S means "Set" through a ptr,
+ * T means "Tell" directly with the argument value
+ * G means "Get": reply by setting through a pointer
+ * Q means "Query": response is on the return value
+ * X means "eXchange": switch G and S atomically
+ * H means "sHift": switch T and Q atomically
+ */
+
 #define DM510_IOC_MAGIC 'e'
 
-#define IOC_BUFFERSIZE _IOW(DM510_IOC_MAGIC, 1, int)
-#define IOC_MAX_READERS _IOW(DM510_IOC_MAGIC, 2, int)
+#define DM_IOCSBUFFER _IOW(DM510_IOC_MAGIC, 1, int)
+#define DM_IOCGBUFFER _IOR(DM510_IOC_MAGIC, 2, int)
+#define DM_IOCSMAXREAD _IOW(DM510_IOC_MAGIC, 3, int)
+#define DM_IOCGMAXREAD _IOR(DM510_IOC_MAGIC, 4, int)
 
 /* file operations struct */
 static struct file_operations dm510_fops = {
@@ -66,6 +77,8 @@ struct DM510_pipe {
 static struct DM510_pipe *dm_devices;
 
 dev_t dm_devno;
+
+static int max_readers = 0;
 
 static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
 		int err, devno = dm_devno + index;
@@ -183,7 +196,6 @@ static int dm510_release( struct inode *inode, struct file *filp ) {
 //	}
 	mutex_unlock(&dev->mutex);
 	return 0;
-	/* device release code belongs here */
 		
 }
 
@@ -198,6 +210,11 @@ static ssize_t dm510_read( struct file *filp,
 
 	if (mutex_lock_interruptible(&dev->mutex))
 		return -ERESTARTSYS;
+
+	if (max_readers && dev->nreaders >= max_readers){
+		mutex_unlock(&dev->mutex);
+		return -EBUSY;
+	}
 
 	while (dev->rp == dev->wp) { /* nothing to read */
 		mutex_unlock(&dev->mutex); /* release the lock */
@@ -303,6 +320,7 @@ static ssize_t dm510_write( struct file *filp,
 }
 
 static long set_buffer(struct DM510_pipe *dev, unsigned long arg){
+	//check om der er argument
 
 	int new_size;
 
@@ -336,6 +354,25 @@ static long set_buffer(struct DM510_pipe *dev, unsigned long arg){
 	return 0;
 }
 
+static long set_max_readers(struct DM510_pipe *dev, unsigned long arg){
+	//flere overvejesler
+	// feks mere en max readers allerede.
+	int new_cap;
+
+	if (copy_from_user(&new_cap, (int __user *)arg, sizeof(new_cap))) {
+		return -EFAULT;
+	}
+
+	if(mutex_lock_interruptible(&dev->mutex))
+		return -ERESTARTSYS;
+
+	max_readers = new_cap;
+
+	mutex_unlock(&dev->mutex);
+
+	return 0;
+}
+
 /* called by system call icotl */ 
 long dm510_ioctl( 
     struct file *filp, 
@@ -347,11 +384,27 @@ long dm510_ioctl(
 	int err;
 
 	switch (cmd) {
-		case IOC_BUFFERSIZE:
+		case DM_IOCSBUFFER:
 			err = set_buffer(dev, arg);
-			if (err)
-				return err;
+			if (err) return err;
 			break;
+
+		case DM_IOCGBUFFER:
+			int size = dev->buffersize;
+			if (copy_to_user((int __user *)arg, &size, sizeof(size)))
+				return -EFAULT;
+			break;
+
+		case DM_IOCSMAXREAD:
+			err = set_max_readers(dev, arg);
+			if (err) return err;
+			break;
+
+		case DM_IOCGMAXREAD:
+			if (copy_to_user((int __user *)arg, &max_readers, sizeof(max_readers)))
+				return -EFAULT;
+			break;
+
 		default:
 			return -EINVAL;
 	}
