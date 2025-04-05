@@ -87,18 +87,19 @@ static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
 		dm_device->cdev.owner = THIS_MODULE;
 		err = cdev_add (&dm_device->cdev, devno, 1);
 		/* Fail gracefully if need be */
-		if (err)
+		if (err){
 			printk(KERN_NOTICE "Error %d adding scullpipe%d", err, index);
-			//return -1; error handling
+		}
+			
 	}
 
-/* called when module is loaded */
+// When we run ./dm510_load
 int dm510_init_module( void ) {
 	dev_t firstdev = MKDEV(MAJOR_NUMBER, MIN_MINOR_NUMBER);
 
 	int err = register_chrdev_region(firstdev, DEVICE_COUNT, DEVICE_NAME);
-	if (err != 0){
-		//Shit error handling here
+	if (err < 0){
+		return err;
 	}
 
 	dm_devno = firstdev;
@@ -118,7 +119,12 @@ int dm510_init_module( void ) {
 		DM510_cdev_setup(dm_devices + i, i);
 
 		dm_devices[i].buffer = kmalloc(DM_BUFFER, GFP_KERNEL);
-		if (!dm_devices[i].buffer) return -ENOMEM;
+		if (!dm_devices[i].buffer) {
+			cdev_del(&dm_devices[i].cdev); //Det her bør måske ske uden for loopet, så vi kan gøre det for begge?
+			unregister_chrdev_region(firstdev, DEVICE_COUNT);
+			kfree(dm_devices);
+			return -ENOMEM;
+		}
 		dm_devices[i].buffersize = DM_BUFFER;
 		dm_devices[i].end = dm_devices[i].buffer + dm_devices[i].buffersize;
 		dm_devices[i].rp = dm_devices[i].wp = dm_devices[i].buffer;
@@ -132,7 +138,7 @@ int dm510_init_module( void ) {
 	return 0;
 }
 
-/* Called when module is unloaded */
+// When we run ./dm510_unload
 void dm510_cleanup_module( void ) {
 
 	if (!dm_devices)
@@ -259,18 +265,14 @@ static int spacefree(struct DM510_pipe *dev)
 static int dm_getwritespace(struct DM510_pipe *dev, struct file *filp)
 {
 	while (spacefree(dev) == 0) { /* full */
-		DEFINE_WAIT(wait);
-		
 		mutex_unlock(&dev->mutex);
+
 		if (filp->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		//Erstat!!  PDEBUG("\"%s\" writing: going to sleep\n",current->comm);
-		prepare_to_wait(&dev->outq, &wait, TASK_INTERRUPTIBLE);
-		if (spacefree(dev) == 0)
-			schedule();
-		finish_wait(&dev->outq, &wait);
-		if (signal_pending(current))
-			return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
+		if (wait_event_interruptible(dev->outq, spacefree(dev) > 0))
+			return -ERESTARTSYS;
+
 		if (mutex_lock_interruptible(&dev->mutex))
 			return -ERESTARTSYS;
 	}
@@ -409,7 +411,7 @@ long dm510_ioctl(
 			return -EINVAL;
 	}
 
-	printk(KERN_INFO "DM510: ioctl called.\n");
+	//printk(KERN_INFO "DM510: ioctl called.\n");
 
 	return 0; //has to be changed
 }

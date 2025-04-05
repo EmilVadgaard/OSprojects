@@ -15,31 +15,44 @@
 
 int main(int argc, char *argv[])
 {
-    int fd;
+    int fd1;
+    int fd2;
 
-    int buffersize;
+    int buffersize1;
+    int buffersize2;
     int new_buffer = 2000;
-    int max_readers;
 
-    fd = open("/dev/dm510-0", O_RDWR);
+    fd1 = open("/dev/dm510-0", O_RDWR);
 
-    if (ioctl(fd, DM_IOCGBUFFER, &buffersize) < 0){
-        close(fd);
+    if (ioctl(fd1, DM_IOCGBUFFER, &buffersize1) < 0){
+        close(fd1);
         return -1;
     }
 
-    printf("Buffersize: %d\n", buffersize);
+    printf("Buffersize: %d\n", buffersize1);
 
-    if (ioctl(fd, DM_IOCSBUFFER, &new_buffer) < 0){
-        close(fd);
+    if (ioctl(fd1, DM_IOCSBUFFER, &new_buffer) < 0){
+        close(fd1);
         return -1;
     }
 
-    if (ioctl(fd, DM_IOCGBUFFER, &buffersize) < 0){
-        close(fd);
+    if (ioctl(fd1, DM_IOCGBUFFER, &buffersize1) < 0){
+        close(fd1);
         return -1;
     }
 
-    printf("Buffersize: %d\n", buffersize);
+    printf("Buffersize for dm510-0: %d\n", buffersize1);
+
+    fd2 = open("/dev/dm510-1", O_RDWR);
+
+    if (ioctl(fd2, DM_IOCGBUFFER, &buffersize2) < 0){
+        close(fd2);
+        return -1;
+    }
+
+    printf("Buffersize for dm510-1: %d\n", buffersize2);
+
+    close(fd1);
+    close(fd2);
 
 }

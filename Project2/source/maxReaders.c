@@ -17,30 +17,29 @@ int main(int argc, char *argv[])
 {
     int fd;
 
-    int buffersize;
-    int new_buffer = 2;
-    int max_readers;
+    int maxReaders;
+    int new_maxReaders = 2;
 
     fd = open("/dev/dm510-0", O_RDWR);
 
-    if (ioctl(fd, DM_IOCGMAXREAD, &buffersize) < 0){
+    if (ioctl(fd, DM_IOCGMAXREAD, &maxReaders) < 0){
         close(fd);
         return -1;
     }
 
-    printf("Max Readers: %d\n", buffersize);
+    printf("Max Readers: %d\n", maxReaders);
 
-    if (ioctl(fd, DM_IOCSMAXREAD, &new_buffer) < 0){
+    if (ioctl(fd, DM_IOCSMAXREAD, &new_maxReaders) < 0){
         close(fd);
         return -1;
     }
 
-    if (ioctl(fd, DM_IOCGMAXREAD, &buffersize) < 0){
+    if (ioctl(fd, DM_IOCGMAXREAD, &maxReaders) < 0){
         close(fd);
         return -1;
     }
 
-    printf("Max Readers: %d\n", buffersize);
+    printf("Max Readers: %d\n", maxReaders);
 
     //fork 3-4 processor, som alle læser., efter der er skrevet rigtig meget??
 
