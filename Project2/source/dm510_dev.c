@@ -34,7 +34,7 @@ long dm510_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 #define DEVICE_COUNT 2
 
-#define DM_BUFFER 1000
+#define DM_BUFFER 10
 /* end of what really should have been in a .h file */
 
 /*
@@ -167,6 +167,11 @@ static int dm510_open( struct inode *inode, struct file *filp ) {
 
 	if (mutex_lock_interruptible(&dev->mutex)) //We aquire device, it is now locked.
 		return -ERESTARTSYS;
+
+	if (max_readers && dev->nreaders >= max_readers){
+		mutex_unlock(&dev->mutex);
+		return -EBUSY;
+	}
 	
 	//Now we have allocated memeory for messages.
 	 /* rd and wr from the beginning */
@@ -216,11 +221,6 @@ static ssize_t dm510_read( struct file *filp,
 
 	if (mutex_lock_interruptible(&dev->mutex))
 		return -ERESTARTSYS;
-
-	if (max_readers && dev->nreaders >= max_readers){
-		mutex_unlock(&dev->mutex);
-		return -EBUSY;
-	}
 
 	while (dev->rp == dev->wp) { /* nothing to read */
 		mutex_unlock(&dev->mutex); /* release the lock */
@@ -305,7 +305,6 @@ static ssize_t dm510_write( struct file *filp,
 		count = min(count, (size_t)(real_dev->end - real_dev->wp)); /* to end-of-buf */
 	else /* the write pointer has wrapped, fill up to rp-1 */
 		count = min(count, (size_t)(real_dev->rp - real_dev->wp - 1));
-	//Erstat!!  PDEBUG("Going to accept %li bytes to %p from %p\n", (long)count, dev->wp, buf);
 	if (copy_from_user(real_dev->wp, buf, count)) {
 		mutex_unlock (&real_dev->mutex);
 		return -EFAULT;
