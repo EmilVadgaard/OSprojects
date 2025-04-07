@@ -107,7 +107,7 @@ int dm510_init_module( void ) {
 
 	if (dm_devices == NULL) {
 		unregister_chrdev_region(firstdev, DEVICE_COUNT);
-		return -1;
+		return -EBUSY;
 	}
 
 	memset(dm_devices, 0, DEVICE_COUNT * sizeof(struct DM510_pipe));
@@ -349,6 +349,8 @@ static long set_buffer(struct DM510_pipe *dev, unsigned long arg){
     dev->rp = dev->wp = dev->buffer;
 
     mutex_unlock(&dev->mutex);
+
+	wake_up_interruptible(&dev->outq);
 
     printk(KERN_INFO "dm510: buffer resized to %d\n", new_size);
 
