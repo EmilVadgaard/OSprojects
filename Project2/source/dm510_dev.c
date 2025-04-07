@@ -64,14 +64,14 @@ static struct file_operations dm510_fops = {
 };
 
 struct DM510_pipe {
-	wait_queue_head_t inq, outq;       /* read and write queues */
-	char *buffer, *end;                /* begin of buf, end of buf */
-	int buffersize;                    /* used in pointer arithmetic */
-	char *rp, *wp;                     /* where to read, where to write */
-	int nreaders, nwriters;            /* number of openings for r/w */
-	struct mutex mutex;                /* mutual exclusion semaphore */
-	struct cdev cdev;                  /* Char device structure */
-	struct DM510_pipe *other_pipe;
+	wait_queue_head_t inq, outq;       // Read and Write queues
+	char *buffer, *end;                // Beginning of buffer, end of buffer
+	int buffersize;                    // Pre-Calculation of buffer
+	char *rp, *wp;                     // Read & Write Start Pointer
+	int nreaders, nwriters;            // Number of readers & writers
+	struct mutex mutex;                // Mutual exclusion semaphore
+	struct cdev cdev;                  // Character device structure
+	struct DM510_pipe *other_pipe;     // Reference to other device
 };
 
 static struct DM510_pipe *dm_devices;
@@ -86,7 +86,7 @@ static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
 		cdev_init(&dm_device->cdev, &dm510_fops);
 		dm_device->cdev.owner = THIS_MODULE;
 		err = cdev_add (&dm_device->cdev, devno, 1);
-		/* Fail gracefully if need be */
+		/*  Fail gracefully if need be  */
 		if (err){
 			printk(KERN_NOTICE "Error %d adding scullpipe%d", err, index);
 		}
@@ -97,7 +97,7 @@ static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
 int dm510_init_module( void ) {
 	dev_t firstdev = MKDEV(MAJOR_NUMBER, MIN_MINOR_NUMBER);
 
-	int err = register_chrdev_region(firstdev, DEVICE_COUNT, DEVICE_NAME);
+	int err = register_chrdev_region(firstdev, DEVICE_COUNT, DEVICE_NAME);	// Creating 2 devices
 	if (err < 0){
 		return err;
 	}
@@ -105,14 +105,14 @@ int dm510_init_module( void ) {
 	dm_devno = firstdev;
 	dm_devices = kmalloc(DEVICE_COUNT * sizeof(struct DM510_pipe), GFP_KERNEL);
 
-	if (dm_devices == NULL) {
-		unregister_chrdev_region(firstdev, DEVICE_COUNT);
+	if (dm_devices == NULL) {						// If memory allocation wasn't possible
+		unregister_chrdev_region(firstdev, DEVICE_COUNT);	
 		return -EBUSY;
 	}
 
 	memset(dm_devices, 0, DEVICE_COUNT * sizeof(struct DM510_pipe));
 
-	for (int i = 0; i < DEVICE_COUNT; i++) {
+	for (int i = 0; i < DEVICE_COUNT; i++) {				// Init for each device
 		init_waitqueue_head(&(dm_devices[i].inq));
 		init_waitqueue_head(&(dm_devices[i].outq));
 		mutex_init(&dm_devices[i].mutex);
@@ -120,7 +120,7 @@ int dm510_init_module( void ) {
 
 		dm_devices[i].buffer = kmalloc(DM_BUFFER, GFP_KERNEL);
 		if (!dm_devices[i].buffer) {
-			cdev_del(&dm_devices[i].cdev); //Det her bør måske ske uden for loopet, så vi kan gøre det for begge?
+			cdev_del(&dm_devices[i].cdev);
 			unregister_chrdev_region(firstdev, DEVICE_COUNT);
 			kfree(dm_devices);
 			return -ENOMEM;
@@ -129,10 +129,10 @@ int dm510_init_module( void ) {
 		dm_devices[i].end = dm_devices[i].buffer + dm_devices[i].buffersize;
 		dm_devices[i].rp = dm_devices[i].wp = dm_devices[i].buffer;
 	}
+
+	/*  Reference to each-other  */
 	dm_devices[0].other_pipe = &dm_devices[1];
 	dm_devices[1].other_pipe = &dm_devices[0];
-
-	/* initialization code belongs here */
 
 	printk(KERN_INFO "DM510: Hello from your device!\n");
 	return 0;
@@ -141,18 +141,16 @@ int dm510_init_module( void ) {
 // When we run ./dm510_unload
 void dm510_cleanup_module( void ) {
 
-	if (!dm_devices)
-		return; /* nothing else to release */
+	if (!dm_devices) 							// If devices already does not exist
+		return; 
 
-	for (int i = 0; i < DEVICE_COUNT; i++) {
+	for (int i = 0; i < DEVICE_COUNT; i++) {				// Deleting devices individually
 		cdev_del(&dm_devices[i].cdev);
 		kfree(dm_devices[i].buffer);
 	}
 	kfree(dm_devices);
 	unregister_chrdev_region(dm_devno, DEVICE_COUNT);
 	dm_devices = NULL; /* pedantic */
-
-	/* clean up code belongs here */
 
 	printk(KERN_INFO "DM510: Module unloaded.\n");
 }
@@ -165,47 +163,37 @@ static int dm510_open( struct inode *inode, struct file *filp ) {
 	dev = container_of(inode->i_cdev, struct DM510_pipe, cdev);
 	filp->private_data = dev;
 
-	if (mutex_lock_interruptible(&dev->mutex)) //We aquire device, it is now locked.
+	if (mutex_lock_interruptible(&dev->mutex)) 				// Aquire device, it is now locked
 		return -ERESTARTSYS;
 
-	if (max_readers && dev->nreaders >= max_readers){
+	if (max_readers && dev->nreaders >= max_readers){			// Ensure not too many current readers
 		mutex_unlock(&dev->mutex);
 		return -EBUSY;
 	}
-	
-	//Now we have allocated memeory for messages.
-	 /* rd and wr from the beginning */
 
-	/* use f_mode,not  f_flags: it's cleaner (fs/open.c tells why) */
-	if (filp->f_mode & FMODE_READ)
+	if (filp->f_mode & FMODE_READ)			// If process wants to be reader
 		dev->nreaders++;
-	if (filp->f_mode & FMODE_WRITE)
+	if (filp->f_mode & FMODE_WRITE)			// If process wants to be writer
 		dev->nwriters++;
-	mutex_unlock(&dev->mutex);
+	
+	mutex_unlock(&dev->mutex);						// Release lock
 
 	return nonseekable_open(inode, filp);
-	/* device claiming code belongs here */
-
-	return 0;
 }
 
 
 /* Called when a process closes the device file. */
 static int dm510_release( struct inode *inode, struct file *filp ) {
-
 	struct DM510_pipe *dev = filp->private_data;
 
-	/* remove this filp from the asynchronously notified filp's */
-	mutex_lock(&dev->mutex);
-	if (filp->f_mode & FMODE_READ)
+	mutex_lock(&dev->mutex);						// Aquire device, it is now locked.
+	
+	if (filp->f_mode & FMODE_READ)			// If process was reader
 		dev->nreaders--;
-	if (filp->f_mode & FMODE_WRITE)
+	if (filp->f_mode & FMODE_WRITE)			// If process was writer
 		dev->nwriters--;
-//	if (dev->nreaders + dev->nwriters == 0) {
-//		kfree(dev->buffer);
-//		dev->buffer = NULL; /* the other fields are not checked on open */
-//	}
-	mutex_unlock(&dev->mutex);
+
+	mutex_unlock(&dev->mutex);						// Release lock
 	return 0;
 		
 }
@@ -213,67 +201,65 @@ static int dm510_release( struct inode *inode, struct file *filp ) {
 
 /* Called when a process, which already opened the dev file, attempts to read from it. */
 static ssize_t dm510_read( struct file *filp,
-    char *ret_buf,      /* The buffer to fill with data     */
-    size_t count,   /* The max number of bytes to read  */
-    loff_t *f_pos )  /* The offset in the file           */
+    char *ret_buf,      // Buffer which will be filled
+    size_t count,   	// Max bytes worth, being read
+    loff_t *f_pos )  	// File offset
 {
 	struct DM510_pipe *dev = filp->private_data;
 
-	if (mutex_lock_interruptible(&dev->mutex))
+	if (mutex_lock_interruptible(&dev->mutex))				// Aquire device, it is now locked
 		return -ERESTARTSYS;
 
-	while (dev->rp == dev->wp) { /* nothing to read */
-		mutex_unlock(&dev->mutex); /* release the lock */
-		if (filp->f_flags & O_NONBLOCK)
-			return -EAGAIN;
-		//Erstat med andet?  PDEBUG("\"%s\" reading: going to sleep\n", current->comm);
-		if (wait_event_interruptible(dev->inq, (dev->rp != dev->wp)))
-			return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
-		/* otherwise loop, but first reacquire the lock */
-		if (mutex_lock_interruptible(&dev->mutex))
+	/*  If data does not exist  */
+	while (dev->rp == dev->wp) { 						// Nothing to read in buffer
+		mutex_unlock(&dev->mutex);						// Release lock, to allow others
+		if (filp->f_flags & O_NONBLOCK)	
+			return -EAGAIN;	
+		if (wait_event_interruptible(dev->inq, (dev->rp != dev->wp)))		// Sleep, until writers notify that data is on buffer
+			return -ERESTARTSYS;	
+		if (mutex_lock_interruptible(&dev->mutex))				// When awakened, aquire lock, and check
 			return -ERESTARTSYS;
 	}
-	/* ok, data is there, return something */
-	if (dev->wp > dev->rp)
+
+	/*  Data exists in buffer  */
+	if (dev->wp > dev->rp)							// In case we do not read past edge
 		count = min(count, (size_t)(dev->wp - dev->rp));
-	else /* the write pointer has wrapped, return data up to dev->end */
+	else 									// In case we do read past edge, wrapping case
 		count = min(count, (size_t)(dev->end - dev->rp));
-	if (copy_to_user(ret_buf, dev->rp, count)) {
+	
+	if (copy_to_user(ret_buf, dev->rp, count)) {				// Give to user-space amount of bytes written
 		mutex_unlock (&dev->mutex);
 		return -EFAULT;
 	}
 	dev->rp += count;
 	if (dev->rp == dev->end)
 		dev->rp = dev->buffer; /* wrapped */
-	mutex_unlock (&dev->mutex);
+	mutex_unlock (&dev->mutex);						// Release lock
 
-	/* finally, awake any writers and return */
-	wake_up_interruptible(&dev->outq);
-	//Erstat igen med andet?  PDEBUG("\"%s\" did read %li bytes\n",current->comm, (long)count);
-	return count;
-	/* read code belongs here */
+	wake_up_interruptible(&dev->outq);					// Awaken writers who are waiting on space on buffer
 	
+	return count;
 }
 
 static int spacefree(struct DM510_pipe *dev)
 {
-	if (dev->rp == dev->wp)
+	if (dev->rp == dev->wp)							// Empty buffer					
 		return dev->buffersize - 1;
-	return ((dev->rp + dev->buffersize - dev->wp) % dev->buffersize) - 1;
+	return ((dev->rp + dev->buffersize - dev->wp) % dev->buffersize) - 1;	// Distance between Read pointer & Write pointer across edge
 }
 
 static int dm_getwritespace(struct DM510_pipe *dev, struct file *filp)
 {
 	while (spacefree(dev) == 0) { /* full */
-		mutex_unlock(&dev->mutex);
+		mutex_unlock(&dev->mutex);					// Aquire device, it is now locked
 
 		if (filp->f_flags & O_NONBLOCK)
 			return -EAGAIN;
-		//Erstat!!  PDEBUG("\"%s\" writing: going to sleep\n",current->comm);
-		if (wait_event_interruptible(dev->outq, spacefree(dev) > 0))
+		
+		if (wait_event_interruptible(dev->outq, spacefree(dev) > 0))	// Sleep, until readers 
 			return -ERESTARTSYS;
 
-		if (mutex_lock_interruptible(&dev->mutex))
+		if (mutex_lock_interruptible(&dev->mutex))			// Release lock
 			return -ERESTARTSYS;
 	}
 	return 0;
@@ -288,55 +274,52 @@ static ssize_t dm510_write( struct file *filp,
     loff_t *f_pos )  /* The offset in the file           */
 {
 	struct DM510_pipe *dev = filp->private_data;
-	struct DM510_pipe *real_dev = dev->other_pipe;
+	struct DM510_pipe *real_dev = dev->other_pipe;				// Write inside the other device
 	int result;
 
-	if (mutex_lock_interruptible(&real_dev->mutex))
+	if (mutex_lock_interruptible(&real_dev->mutex))				// Aquire device, it is now locked
 		return -ERESTARTSYS;
 
-	/* Make sure there's space to write */
-	result = dm_getwritespace(real_dev, filp);
+	result = dm_getwritespace(real_dev, filp);				// Ensure there is space in buffer
 	if (result)
-		return result; /* scull_getwritespace called mutex_unlock(&dev->mutex) */
+		return result;
 
-	/* ok, space is there, accept something */
+	/*  Space in buffer, write into buffer  */
 	count = min(count, (size_t)spacefree(real_dev));
-	if (real_dev->wp >= real_dev->rp)
-		count = min(count, (size_t)(real_dev->end - real_dev->wp)); /* to end-of-buf */
-	else /* the write pointer has wrapped, fill up to rp-1 */
+	if (real_dev->wp >= real_dev->rp)					// In case we do not write past edge
+		count = min(count, (size_t)(real_dev->end - real_dev->wp));
+	else									// In case we do write past edge, wrapping.
 		count = min(count, (size_t)(real_dev->rp - real_dev->wp - 1));
-	if (copy_from_user(real_dev->wp, buf, count)) {
+	if (copy_from_user(real_dev->wp, buf, count)) {				// Take data input from user-space and write into buffer
 		mutex_unlock (&real_dev->mutex);
 		return -EFAULT;
 	}
 	real_dev->wp += count;
 	if (real_dev->wp == real_dev->end)
-		real_dev->wp = real_dev->buffer; /* wrapped */
-	mutex_unlock(&real_dev->mutex);
-
-	/* finally, awake any reader */
-	wake_up_interruptible(&real_dev->inq);  /* blocked in read() and select() */
+		real_dev->wp = real_dev->buffer;					// Wrapped
+	mutex_unlock(&real_dev->mutex);						// Release lock
+	
+	wake_up_interruptible(&real_dev->inq);					// Awaken readers waiting on new data
 
 	return count;
 }
 
 static long set_buffer(struct DM510_pipe *dev, unsigned long arg){
-	//check om der er argument
-
 	int new_size;
 
-	if (copy_from_user(&new_size, (int __user *)arg, sizeof(new_size))) {
+	if (copy_from_user(&new_size, (int __user *)arg, sizeof(new_size))) {	// Receive new size from user-space
 		return -EFAULT;
 	}
 
-	if (mutex_lock_interruptible(&dev->mutex))
+	if (mutex_lock_interruptible(&dev->mutex))				// Aquire device, it is now locked
             return -ERESTARTSYS;
 
-	if (dev->buffer) {
+	if (dev->buffer) {							// Free old buffer
 		kfree(dev->buffer);
 		dev->buffer = NULL;
 	}
 
+	/*  Creating new buffer  */
 	dev->buffer = kmalloc(new_size, GFP_KERNEL);
 	if (!dev->buffer) {
 		mutex_unlock(&dev->mutex);
@@ -348,9 +331,9 @@ static long set_buffer(struct DM510_pipe *dev, unsigned long arg){
     dev->end = dev->buffer + new_size;
     dev->rp = dev->wp = dev->buffer;
 
-    mutex_unlock(&dev->mutex);
+    mutex_unlock(&dev->mutex);							// Release lock
 
-	wake_up_interruptible(&dev->outq);
+	wake_up_interruptible(&dev->outq);					// Awaken any waiting writers, as buffer is fully empty
 
     printk(KERN_INFO "dm510: buffer resized to %d\n", new_size);
 
@@ -358,20 +341,18 @@ static long set_buffer(struct DM510_pipe *dev, unsigned long arg){
 }
 
 static long set_max_readers(struct DM510_pipe *dev, unsigned long arg){
-	//flere overvejesler
-	// feks mere en max readers allerede.
 	int new_cap;
 
-	if (copy_from_user(&new_cap, (int __user *)arg, sizeof(new_cap))) {
+	if (copy_from_user(&new_cap, (int __user *)arg, sizeof(new_cap))) {	// Receive new number from user-space
 		return -EFAULT;
 	}
 
-	if(mutex_lock_interruptible(&dev->mutex))
+	if(mutex_lock_interruptible(&dev->mutex))				// Aquire device, it is now locked
 		return -ERESTARTSYS;
 
 	max_readers = new_cap;
 
-	mutex_unlock(&dev->mutex);
+	mutex_unlock(&dev->mutex);						// Release lock
 
 	return 0;
 }
@@ -379,10 +360,9 @@ static long set_max_readers(struct DM510_pipe *dev, unsigned long arg){
 /* called by system call icotl */ 
 long dm510_ioctl( 
     struct file *filp, 
-    unsigned int cmd,   /* command passed from the user */
-    unsigned long arg ) /* argument of the command */
+    unsigned int cmd,   	// Command
+    unsigned long arg ) 	// Arguments for command
 {
-	/* ioctl code belongs here */
 	struct DM510_pipe *dev = filp->private_data;
 	int err;
 
@@ -411,8 +391,7 @@ long dm510_ioctl(
 		default:
 			return -EINVAL;
 	}
-
-	//printk(KERN_INFO "DM510: ioctl called.\n");
+	printk(KERN_INFO "DM510: ioctl called.\n");
 
 	return 0; //has to be changed
 }
