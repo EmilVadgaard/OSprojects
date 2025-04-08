@@ -90,8 +90,6 @@ static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
 			printk(KERN_NOTICE "Error %d adding scullpipe%d", err, index);
 		}
 	}
-			
-}
 
 // When we run ./dm510_load
 int dm510_init_module( void ) {
