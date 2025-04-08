@@ -222,9 +222,9 @@ static ssize_t dm510_read( struct file *filp,
 	}
 
 	/*  Data exists in buffer  */
-	if (dev->wp > dev->rp)							// In case we do not read past edge
+	if (dev->wp > dev->rp)					
 		count = min(count, (size_t)(dev->wp - dev->rp));
-	else 									// In case we do read past edge, wrapping case
+	else 							
 		count = min(count, (size_t)(dev->end - dev->rp));
 	
 	if (copy_to_user(ret_buf, dev->rp, count)) {				// Give to user-space amount of bytes written
@@ -257,7 +257,7 @@ static int dm_getwritespace(struct DM510_pipe *dev, struct file *filp)
 		if (filp->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		
-		if (wait_event_interruptible(dev->outq, spacefree(dev) > 0))	// Sleep, until readers 
+		if (wait_event_interruptible(dev->outq, spacefree(dev) > 0))	// Sleep
 			return -ERESTARTSYS;
 
 		if (mutex_lock_interruptible(&dev->mutex))			// Release lock
@@ -287,9 +287,9 @@ static ssize_t dm510_write( struct file *filp,
 
 	/*  Space in buffer, write into buffer  */
 	count = min(count, (size_t)spacefree(real_dev));
-	if (real_dev->wp >= real_dev->rp)					// In case we do not write past edge
+	if (real_dev->wp >= real_dev->rp)
 		count = min(count, (size_t)(real_dev->end - real_dev->wp));
-	else									// In case we do write past edge, wrapping.
+	else
 		count = min(count, (size_t)(real_dev->rp - real_dev->wp - 1));
 	if (copy_from_user(real_dev->wp, buf, count)) {				// Take data input from user-space and write into buffer
 		mutex_unlock (&real_dev->mutex);
@@ -392,9 +392,8 @@ long dm510_ioctl(
 		default:
 			return -EINVAL;
 	}
-	printk(KERN_INFO "DM510: ioctl called.\n");
 
-	return 0; //has to be changed
+	return 0;
 }
 
 module_init( dm510_init_module );
