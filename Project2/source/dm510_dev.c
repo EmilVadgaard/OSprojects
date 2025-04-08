@@ -81,17 +81,17 @@ dev_t dm_devno;
 static int max_readers = 0;
 
 static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
-		int err, devno = dm_devno + index;
+	int err, devno = dm_devno + index;
 		
-		cdev_init(&dm_device->cdev, &dm510_fops);
-		dm_device->cdev.owner = THIS_MODULE;
-		err = cdev_add (&dm_device->cdev, devno, 1);
-		/* Fail gracefully if need be */
-		if (err){
-			printk(KERN_NOTICE "Error %d adding scullpipe%d", err, index);
-		}
-			
+	cdev_init(&dm_device->cdev, &dm510_fops);
+	dm_device->cdev.owner = THIS_MODULE;
+	err = cdev_add (&dm_device->cdev, devno, 1);
+	/* Fail gracefully if need be */
+	if (err){
+		printk(KERN_NOTICE "Error %d adding scullpipe%d", err, index);
 	}
+			
+}
 
 // When we run ./dm510_load
 int dm510_init_module( void ) {
@@ -226,7 +226,6 @@ static ssize_t dm510_read( struct file *filp,
 		mutex_unlock(&dev->mutex); /* release the lock */
 		if (filp->f_flags & O_NONBLOCK)
 			return -EAGAIN;
-		//Erstat med andet?  PDEBUG("\"%s\" reading: going to sleep\n", current->comm);
 		if (wait_event_interruptible(dev->inq, (dev->rp != dev->wp)))
 			return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
 		/* otherwise loop, but first reacquire the lock */
@@ -255,6 +254,7 @@ static ssize_t dm510_read( struct file *filp,
 	
 }
 
+/* Finds amount of free space - 1*/
 static int spacefree(struct DM510_pipe *dev)
 {
 	if (dev->rp == dev->wp)
