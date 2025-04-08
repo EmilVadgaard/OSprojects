@@ -81,8 +81,7 @@ dev_t dm_devno;
 static int max_readers = 0;
 
 static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
-		int err, devno = dm_devno + index;
-		
+	int err, devno = dm_devno + index;
 		cdev_init(&dm_device->cdev, &dm510_fops);
 		dm_device->cdev.owner = THIS_MODULE;
 		err = cdev_add (&dm_device->cdev, devno, 1);
@@ -90,8 +89,9 @@ static void DM510_cdev_setup(struct DM510_pipe *dm_device, int index ){
 		if (err){
 			printk(KERN_NOTICE "Error %d adding scullpipe%d", err, index);
 		}
-			
 	}
+			
+}
 
 // When we run ./dm510_load
 int dm510_init_module( void ) {
@@ -241,6 +241,7 @@ static ssize_t dm510_read( struct file *filp,
 	return count;
 }
 
+/* Finds amount of free space - 1*/
 static int spacefree(struct DM510_pipe *dev)
 {
 	if (dev->rp == dev->wp)							// Empty buffer					
