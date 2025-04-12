@@ -38,19 +38,21 @@ static struct fuse_operations dm510fs_oper = {
 	.destroy = dm510fs_destroy
 };
 
-typedef struct dm510_inode {
-    int used;                // 0 hvis inode ikke er i brug
-    int isDir;               // 1 hvis directory, 0 hvis fil
-    char name[MAX_NAME_LEN]; // Fil-/mappenavn
-    char path[MAX_NAME_LEN]; // Sti, fx "/dir1/fileA"
+struct dm510_inode {
+    int used;                // 0 if inode not in use
+    int isDir;               // 0 if file, 1 if directory
+    char name[MAX_NAME_LEN]; // File or folder name
+    char path[MAX_NAME_LEN]; // path, fx "/dir1/fileA"
 
-    size_t size;             // Hvor mange bytes i fil
+    char parent[MAX_NAME_LEN]; // Path inode before this one.
 
-    char data[MAX_FILE_SIZE]; // Selve data for filen
-    // Evt. tilføj flere felter, fx child-liste hvis isDir==1
-}
+    size_t size;             // amount of bytes in file, 0 if folder.
 
-static dm510_inode fs_inodes[MAX_FILES];
+    char data[MAX_FILE_SIZE]; // Data for file
+    // maybe more?
+};
+
+static struct dm510_inode fs_inodes[MAX_FILES];
 
 /*
  * Return file attributes.
@@ -64,15 +66,27 @@ int dm510fs_getattr( const char *path, struct stat *stbuf ) {
 	printf("getattr: (path=%s)\n", path);
 
 	memset(stbuf, 0, sizeof(struct stat));
-	if( strcmp( path, "/" ) == 0 ) {
-		stbuf->st_mode = S_IFDIR | 0755;
-		stbuf->st_nlink = 2;
-	} else if( strcmp( path, "/hello" ) == 0 ) {
-		stbuf->st_mode = S_IFREG | 0777;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = 12;
-	} else
-		res = -ENOENT;
+
+    struct dm510_inode *node = NULL;
+
+    for (int i = 0; i < MAX_FILES; i++){
+        if (strcmp(fs_inodes[i].path, path) == 0){
+            node = &fs_inodes[i];
+            break;
+        }
+    }
+    if (node == NULL){
+        return -ENOENT;
+    }
+
+    if (node->isDir){
+        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_nlink = 2;
+    } else {
+        stbuf->st_mode = S_IFREG | 0644;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = node->size;
+    }
 
 	return res;
 }
@@ -156,6 +170,15 @@ int dm510fs_release(const char *path, struct fuse_file_info *fi) {
  */
 void* dm510fs_init() {
     printf("init filesystem\n");
+    FILE *f = fopen("./fs_data.dat", "rb");
+
+    if (f) {
+        fread(fs_inodes, sizeof(fs_inodes), 1, f);
+        fclose(f);
+        //corruption??
+    } else {
+        memset(fs_inodes, 0, sizeof(fs_inodes));
+    }
     return NULL;
 }
 
@@ -165,7 +188,16 @@ void* dm510fs_init() {
  */
 void dm510fs_destroy(void *private_data) {
     printf("destroy filesystem\n");
+
+    FILE *f = fopen("./fs_data.dat", "wb");
+
+    if (f){
+        fwrite(fs_inodes, sizeof(fs_inodes), 1, f);
+        fclose(f);
+    }
 }
+
+//Helper functions.
 
 
 int main( int argc, char *argv[] ) {
