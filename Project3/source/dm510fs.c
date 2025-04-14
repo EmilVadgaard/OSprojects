@@ -67,6 +67,13 @@ int dm510fs_getattr( const char *path, struct stat *stbuf ) {
 
 	memset(stbuf, 0, sizeof(struct stat));
 
+    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
+        path = "/";
+    }
+    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
+        path = "/";
+    }
+
     struct dm510_inode *node = NULL;
 
     for (int i = 0; i < MAX_FILES; i++){
@@ -119,12 +126,37 @@ int dm510fs_readdir( const char *path, void *buf, fuse_fill_dir_t filler, off_t 
 	(void) fi;
 	printf("readdir: (path=%s)\n", path);
 
-	if(strcmp(path, "/") != 0)
-		return -ENOENT;
+    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
+        path = "/";
+    }
+    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
+        path = "/";
+    }
+
+	struct dm510_inode *node = NULL;
+
+    for (int i = 0; i < MAX_FILES; i++){
+        if (strcmp(fs_inodes[i].path, path) == 0){
+            node = &fs_inodes[i];
+            break;
+        }
+    }
+    if (node == NULL){
+        return -ENOENT;
+    }
+    if (node->isDir == 0){
+        return -ENOTDIR;
+    }
 
 	filler(buf, ".", NULL, 0);
 	filler(buf, "..", NULL, 0);
-	filler(buf, "hello", NULL, 0);
+	
+    for (int i = 0; i < MAX_FILES; i++){
+        if (!fs_inodes[i].used) continue;
+        if (strcmp(fs_inodes[i].parent, path) == 0){
+            filler(buf, fs_inodes[i].name, NULL, 0);
+        }
+    }
 
 	return 0;
 }
@@ -170,7 +202,7 @@ int dm510fs_release(const char *path, struct fuse_file_info *fi) {
  */
 void* dm510fs_init() {
     printf("init filesystem\n");
-    FILE *f = fopen("./fs_data.dat", "rb");
+    FILE *f = fopen("/root/dm510/Project3/fs_data.dat", "rb");
 
     if (f) {
         fread(fs_inodes, sizeof(fs_inodes), 1, f);
@@ -178,6 +210,13 @@ void* dm510fs_init() {
         //corruption??
     } else {
         memset(fs_inodes, 0, sizeof(fs_inodes));
+
+        fs_inodes[0].used = 1;
+        fs_inodes[0].isDir = 1;
+
+        strcpy(fs_inodes[0].name, "/");
+        strcpy(fs_inodes[0].path, "/");
+        strcpy(fs_inodes[0].parent, "");
     }
     return NULL;
 }
@@ -189,7 +228,7 @@ void* dm510fs_init() {
 void dm510fs_destroy(void *private_data) {
     printf("destroy filesystem\n");
 
-    FILE *f = fopen("./fs_data.dat", "wb");
+    FILE *f = fopen("/root/dm510/Project3/fs_data.dat", "wb");
 
     if (f){
         fwrite(fs_inodes, sizeof(fs_inodes), 1, f);
@@ -198,7 +237,9 @@ void dm510fs_destroy(void *private_data) {
 }
 
 //Helper functions.
+char *normilize_path(const char path){
 
+}
 
 int main( int argc, char *argv[] ) {
 	fuse_main( argc, argv, &dm510fs_oper );
