@@ -1,16 +1,29 @@
 #include <fuse.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 int dm510fs_getattr( const char *, struct stat * );
 int dm510fs_readdir( const char *, void *, fuse_fill_dir_t, off_t, struct fuse_file_info * );
+int dm510fs_mkdir(const char *, mode_t);
+int dm510fs_mknod(const char *, mode_t, dev_t);
 int dm510fs_open( const char *, struct fuse_file_info * );
 int dm510fs_read( const char *, char *, size_t, off_t, struct fuse_file_info * );
+int dm510fs_write(const char *path, const char *buf,
+    size_t size, off_t offset, struct fuse_file_info *fi);
 int dm510fs_release(const char *path, struct fuse_file_info *fi);
+int dm510fs_unlink(const char *path);
+int dm510fs_rmdir(const char *path);
+int dm510fs_truncate(const char *path, off_t size);
+int dm510fs_utime(const char *path, struct utimbuf buf);
 void* dm510fs_init();
 void dm510fs_destroy(void *private_data);
+
+static struct dm510_inode *find_inode(const char *path);
+static char *get_name(const char *path);
+static char *get_parent(const char *path);
 
 #define MAX_FILES 100
 #define MAX_NAME_LEN  64
@@ -23,17 +36,17 @@ void dm510fs_destroy(void *private_data);
 static struct fuse_operations dm510fs_oper = {
 	.getattr	= dm510fs_getattr,
 	.readdir	= dm510fs_readdir,
-	.mknod = NULL,
-	.mkdir = NULL,
-	.unlink = NULL,
-	.rmdir = NULL,
-	.truncate = NULL,
+	.mknod = dm510fs_mknod,
+	.mkdir      = dm510fs_mkdir,
+	.unlink = dm510fs_unlink,
+	.rmdir = dm510fs_rmdir,
+	.truncate = dm510fs_truncate,
 	.open	= dm510fs_open,
 	.read	= dm510fs_read,
 	.release = dm510fs_release,
-	.write = NULL,
+	.write = dm510fs_write,
 	.rename = NULL,
-	.utime = NULL,
+	.utime = dm510fs_utime,
 	.init = dm510fs_init,
 	.destroy = dm510fs_destroy
 };
@@ -62,21 +75,15 @@ static struct dm510_inode fs_inodes[MAX_FILES];
  * This call is pretty much required for a usable filesystem.
 */
 int dm510fs_getattr( const char *path, struct stat *stbuf ) {
-	int res = 0;
-	printf("getattr: (path=%s)\n", path);
+	//printf("getattr: (path=%s)\n", path);
 
 	memset(stbuf, 0, sizeof(struct stat));
-
-    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
-        path = "/";
-    }
-    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
-        path = "/";
-    }
 
     struct dm510_inode *node = NULL;
 
     for (int i = 0; i < MAX_FILES; i++){
+        if (!fs_inodes[i].used)
+            continue;
         if (strcmp(fs_inodes[i].path, path) == 0){
             node = &fs_inodes[i];
             break;
@@ -94,8 +101,8 @@ int dm510fs_getattr( const char *path, struct stat *stbuf ) {
         stbuf->st_nlink = 1;
         stbuf->st_size = node->size;
     }
-
-	return res;
+    //printf("succes\n");
+	return 0;
 }
 
 /*
@@ -124,14 +131,7 @@ int dm510fs_getattr( const char *path, struct stat *stbuf ) {
 int dm510fs_readdir( const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi ) {
 	(void) offset;
 	(void) fi;
-	printf("readdir: (path=%s)\n", path);
-
-    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
-        path = "/";
-    }
-    if (strcmp(path, "/.") == 0 || strcmp(path, "/..") == 0) {
-        path = "/";
-    }
+	//printf("readdir: (path=%s)\n", path);
 
 	struct dm510_inode *node = NULL;
 
@@ -170,7 +170,19 @@ int dm510fs_readdir( const char *path, void *buf, fuse_fill_dir_t filler, off_t 
 */
 int dm510fs_open( const char *path, struct fuse_file_info *fi ) {
     printf("open: (path=%s)\n", path);
-	return 0;
+
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (!fs_inodes[i].used) continue;
+        if (strcmp(fs_inodes[i].path, path)==0) {
+
+            if (fs_inodes[i].isDir)
+                return -EISDIR;
+
+            fi->fh = i;
+            return 0;                /* success */
+        }
+    }
+    return -ENOENT;
 }
 
 /*
@@ -179,9 +191,35 @@ int dm510fs_open( const char *path, struct fuse_file_info *fi ) {
 */
 int dm510fs_read( const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi ) {
     printf("read: (path=%s)\n", path);
-	memcpy( buf, "Hello\n", 6 );
-	return 6;
+
+    struct dm510_inode *node = &fs_inodes[fi->fh];
+
+    if ((size_t)offset >= node->size)
+        return 0;
+
+    size_t bytes = node->size - offset;
+    if (bytes > size) bytes = size;
+
+    memcpy(buf, node->data, node->size);
+	
+	return (int)bytes;
 }
+
+int dm510fs_write(const char *path, const char *buf,
+    size_t size, off_t offset, struct fuse_file_info *fi){
+        printf("write: (path=%s)\n", path);
+        struct dm510_inode *node = &fs_inodes[fi->fh];
+
+        if (offset + size > MAX_FILE_SIZE)
+        size = MAX_FILE_SIZE - offset;
+
+        memcpy(node->data + offset, buf, size);
+
+        if (offset + size > node->size)
+            node->size = offset + size;
+
+        return (int)size;
+    }
 
 /*
  * This is the only FUSE function that doesn't have a directly corresponding system call, although close(2) is related.
@@ -190,6 +228,124 @@ int dm510fs_read( const char *path, char *buf, size_t size, off_t offset, struct
 int dm510fs_release(const char *path, struct fuse_file_info *fi) {
 	printf("release: (path=%s)\n", path);
 	return 0;
+}
+
+//Tjek mappe navnet for sikkerhed
+//tjek om den findes i forvejen.
+int dm510fs_mkdir(const char *path, mode_t mode){
+    //check if path exists
+    char *name = get_name(path);
+    char *parent = get_parent(path);
+    //printf("%s\n", path);
+    //printf("%s\n", name);
+    //printf("%s\n", parent);
+
+    mode = 755;
+
+    //Make directory
+    for (int i = 0; i < MAX_FILES; i++){
+        if (!fs_inodes[i].used){
+            memset(&fs_inodes[i], 0, sizeof(struct dm510_inode));
+            fs_inodes[i].used = 1;
+            fs_inodes[i].isDir = 1;
+            //printf("test1 %s\n",name);
+            strcpy(fs_inodes[i].name, name);
+            //printf("test2 %s\n",path);
+            strcpy(fs_inodes[i].path, path);
+
+            //printf("test3 %s\n",parent);
+            strcpy(fs_inodes[i].parent, parent);
+            break;
+        }
+    }
+    return 0;
+}
+
+//Tjek længden på fil navn for security.
+int dm510fs_mknod(const char *path, mode_t mode, dev_t dev){
+    char *name = get_name(path);
+    char *parent = get_parent(path);
+
+    if (!S_ISREG(mode) && !S_ISFIFO(mode))
+        return -EINVAL;
+
+    mode = 755;
+
+    for (int i = 0; i < MAX_FILES; i++){
+        if (!fs_inodes[i].used){
+            memset(&fs_inodes[i], 0, sizeof(struct dm510_inode));
+            fs_inodes[i].used = 1;
+            fs_inodes[i].isDir = 0;
+            //printf("test1 %s\n",name);
+            strcpy(fs_inodes[i].name, name);
+            //printf("test2 %s\n",path);
+            strcpy(fs_inodes[i].path, path);
+
+            //printf("test3 %s\n",parent);
+            strcpy(fs_inodes[i].parent, parent);
+
+            fs_inodes[i].size = 0;
+
+            memset(fs_inodes[i].data, 0, MAX_FILE_SIZE);
+
+            break;
+        }
+    }
+
+    return 0;
+}
+
+int dm510fs_unlink(const char *path){
+    struct dm510_inode *node = NULL;
+
+    node = find_inode(path);
+
+    if (!node) return -ENOENT;
+
+    memset(node, 0, sizeof(struct dm510_inode));
+    
+    return 0;
+}
+
+int dm510fs_rmdir(const char *path){
+    struct dm510_inode *node = NULL;
+
+    node = find_inode(path);
+
+    if (!node) return -ENOENT;
+
+    memset(node, 0, sizeof(struct dm510_inode));
+    
+    return 0;
+}
+
+int dm510fs_truncate(const char *path, off_t size){
+    struct dm510_inode *node = NULL;
+
+    for (int i = 0; i < MAX_FILES; i++){
+        if (!fs_inodes[i].used) continue;
+
+        if (strcmp(fs_inodes[i].path, path) == 0){
+            node = &fs_inodes[i];
+            break; 
+        }
+    }
+
+    if(!node) return -ENOENT;
+    if(node->isDir) return -EISDIR;
+    if(size > MAX_FILE_SIZE) return -EFBIG;
+
+    if ((size_t)size > node->size)
+        memset(node->data + node->size, 0, size - node->size);
+
+    node->size = size;
+
+    return 0;
+}
+
+int dm510fs_utime(const char *path, struct utimbuf buf){
+
+    return 0;
 }
 
 /**
@@ -205,20 +361,60 @@ void* dm510fs_init() {
     FILE *f = fopen("/root/dm510/Project3/fs_data.dat", "rb");
 
     if (f) {
-        fread(fs_inodes, sizeof(fs_inodes), 1, f);
+        memset(fs_inodes, 0, sizeof(fs_inodes));
+        fread(fs_inodes, sizeof(fs_inodes), 1, f); //Maybe needs to be fixed
         fclose(f);
-        //corruption??
+        //corruption?? 
     } else {
         memset(fs_inodes, 0, sizeof(fs_inodes));
 
         fs_inodes[0].used = 1;
         fs_inodes[0].isDir = 1;
 
-        strcpy(fs_inodes[0].name, "/");
+        strcpy(fs_inodes[0].name, "root");
         strcpy(fs_inodes[0].path, "/");
         strcpy(fs_inodes[0].parent, "");
     }
-    return NULL;
+    return 0;
+}
+
+static struct dm510_inode *find_inode(const char *path){
+    struct dm510_inode *node = NULL;
+
+    for (int i = 0; i < MAX_FILES; i++){
+        if (!fs_inodes[i].used) continue;
+
+        if (strcmp(fs_inodes[i].path, path) == 0){
+            node = &fs_inodes[i];
+            return node;
+        }
+    }
+
+    return node;
+}
+
+static char *get_name(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+
+    const char *name = (slash ? slash + 1 : path);
+
+    if (*name == '\0') 
+        return strdup("");  
+
+    return strdup(name);
+}
+
+static char *get_parent(const char *path){
+    const char *slash = strrchr(path, '/');
+    if (slash == path)
+        return strdup("/");
+
+    size_t len = slash - path;
+    char *parent = malloc(len + 1);
+    strncpy(parent, path, len);
+    parent[len] = '\0';
+    return parent;
 }
 
 /**
@@ -236,10 +432,7 @@ void dm510fs_destroy(void *private_data) {
     }
 }
 
-//Helper functions.
-char *normilize_path(const char path){
 
-}
 
 int main( int argc, char *argv[] ) {
 	fuse_main( argc, argv, &dm510fs_oper );
