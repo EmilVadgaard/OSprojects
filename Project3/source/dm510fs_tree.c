@@ -21,11 +21,12 @@ int dm510fs_utime(const char *path, struct utimbuf buf);
 void* dm510fs_init();
 void dm510fs_destroy(void *private_data);
 
+static dm_inode *new_inode(const char *name, bool isDir);
 static struct dm510_inode *find_inode(const char *path);
 static char *get_name(const char *path);
 static char *get_parent(const char *path);
 
-#define MAX_FILES 1280
+#define MAX_FILES 100
 #define MAX_NAME_LEN  64
 #define MAX_FILE_SIZE 4096
 
@@ -51,21 +52,22 @@ static struct fuse_operations dm510fs_oper = {
 	.destroy = dm510fs_destroy
 };
 
-struct dm510_inode {
+typedef struct dm510_inode {
     int used;                // 0 if inode not in use
     int isDir;               // 0 if file, 1 if directory
     char name[MAX_NAME_LEN]; // File or folder name
-    char path[MAX_NAME_LEN]; // path, fx "/dir1/fileA"
-
-    char parent[MAX_NAME_LEN]; // Path inode before this one.
+    
+    struct dm510_inode *parent; // Path inode before this one.
+    struct dm510_inode *first_child;
+    struct dm510_inode *sibling;
 
     size_t size;             // amount of bytes in file, 0 if folder.
 
     char data[MAX_FILE_SIZE]; // Data for file
     // maybe more?
-};
+} dm_inode;
 
-static struct dm510_inode fs_inodes[MAX_FILES];
+static dm_inode *root = NULL;
 
 /*
  * Return file attributes.
@@ -122,6 +124,8 @@ int dm510fs_getattr( const char *path, struct stat *stbuf ) {
  * in particular it can return -EBADF if the file handle is invalid, or -ENOENT if you use the path argument and the path doesn't exist.
 */
 int dm510fs_readdir( const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi ) {
+	(void) offset;
+	(void) fi;
 	//printf("readdir: (path=%s)\n", path);
 
     struct dm510_inode *node = NULL;
@@ -241,7 +245,6 @@ int dm510fs_mkdir(const char *path, mode_t mode){
             break;
         }
     }
-    free(parent);
     return 0;
 }
 
@@ -275,8 +278,6 @@ int dm510fs_mknod(const char *path, mode_t mode, dev_t dev){
             break;
         }
     }
-
-    free(parent);
 
     return 0;
 }
@@ -334,6 +335,15 @@ int dm510fs_utime(const char *path, struct utimbuf buf){
     return 0;
 }
 
+static dm_inode *new_inode(const char *name, bool isDir){
+    dm_inode *node = calloc(1, sizeof(node));
+    if (!node) = return NULL;
+
+    node->isDir = isDir;
+    strncpy(node->name, name, MAX_NAME_LEN-1);
+    return node;
+}
+
 /**
  * Initialize filesystem
  *
@@ -347,26 +357,18 @@ void* dm510fs_init() {
     FILE *f = fopen("/root/dm510/Project3/fs_data.dat", "rb");
 
     if (f) {
-        memset(fs_inodes, 0, sizeof(fs_inodes));
-        fread(fs_inodes, sizeof(fs_inodes), 1, f); //Maybe needs to be fixed
-        fclose(f);
+        //memset(fs_inodes, 0, sizeof(fs_inodes));
+        //fread(fs_inodes, sizeof(fs_inodes), 1, f); //Maybe needs to be fixed
         //corruption?? 
     } else {
-        memset(fs_inodes, 0, sizeof(fs_inodes));
-
-        fs_inodes[0].used = 1;
-        fs_inodes[0].isDir = 1;
-
-        strcpy(fs_inodes[0].name, "root");
-        strcpy(fs_inodes[0].path, "/");
-        strcpy(fs_inodes[0].parent, "");
+        dm_inode root = new_inode("root", true);
     }
-    
+    fclose(f);
     return 0;
 }
 
 static struct dm510_inode *find_inode(const char *path){
-    struct dm510_inode *node = NULL;
+    struct dm_inode *node = NULL;
 
     for (int i = 0; i < MAX_FILES; i++){
         if (!fs_inodes[i].used) continue;

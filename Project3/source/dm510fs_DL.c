@@ -61,9 +61,15 @@ struct dm510_inode {
 
     size_t size;             // amount of bytes in file, 0 if folder.
 
-    char data[MAX_FILE_SIZE]; // Data for file
+    Block *first_block; // Data for file
     // maybe more?
 };
+
+struct block{
+    char data[512];
+}
+
+static struct block blocks[MAX_FILE_SIZE * MAX_FILES];
 
 static struct dm510_inode fs_inodes[MAX_FILES];
 
@@ -364,6 +370,8 @@ void* dm510fs_init() {
     
     return 0;
 }
+
+static freeblocks()
 
 static struct dm510_inode *find_inode(const char *path){
     struct dm510_inode *node = NULL;
