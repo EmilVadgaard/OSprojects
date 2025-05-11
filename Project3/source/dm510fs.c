@@ -16,18 +16,22 @@ int dm510fs_write(const char *path, const char *buf,
 int dm510fs_release(const char *path, struct fuse_file_info *fi);
 int dm510fs_unlink(const char *path);
 int dm510fs_rmdir(const char *path);
-int dm510fs_truncate(const char *path, off_t size);
+int dm510fs_truncate(const char *path, off_t new_size);
 int dm510fs_utime(const char *path, struct utimbuf buf);
 void* dm510fs_init();
 void dm510fs_destroy(void *private_data);
 
+static int freeblock();
 static struct dm510_inode *find_inode(const char *path);
 static char *get_name(const char *path);
 static char *get_parent(const char *path);
 
 #define MAX_FILES 1280
 #define MAX_NAME_LEN  64
-#define MAX_FILE_SIZE 4096
+#define AVG_FILE_SIZE 4096
+#define BLOCK_SIZE 512
+#define MAX_BLOCK ((MAX_FILES * AVG_FILE_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
+#define DATA_SECTION (BLOCK_SIZE - 2*sizeof(int))
 
 /*
  * See descriptions in fuse source code usually located in /usr/include/fuse/fuse.h
@@ -61,9 +65,17 @@ struct dm510_inode {
 
     size_t size;             // amount of bytes in file, 0 if folder.
 
-    char data[MAX_FILE_SIZE]; // Data for file
+    int first_block; // Data for file
     // maybe more?
 };
+
+struct block{
+    int used;
+    char data[DATA_SECTION];
+    int next_block;
+};  
+
+static struct block blocks[MAX_BLOCK];
 
 static struct dm510_inode fs_inodes[MAX_FILES];
 
@@ -177,31 +189,92 @@ int dm510fs_read( const char *path, char *buf, size_t size, off_t offset, struct
 
     struct dm510_inode *node = &fs_inodes[fi->fh];
 
-    if ((size_t)offset >= node->size)
+    if (offset >= node->size)
         return 0;
 
-    size_t bytes = node->size - offset;
-    if (bytes > size) bytes = size;
+    if (offset + size > node->size)
+        size = node->size - offset;
 
-    memcpy(buf, node->data, node->size);
-	
-	return (int)bytes;
+    size_t done = 0;
+    int block_index = node->first_block;
+
+    size_t block_number = offset / DATA_SECTION;
+    size_t block_offset = offset % DATA_SECTION;
+    for (size_t i = 0; i < block_number; i++){
+        block_index = blocks[block_index].next_block;
+    }
+
+    while (done < size && block_number != -1){
+        size_t space = DATA_SECTION - block_offset;
+        size_t data = (size - done < space) ? (size - done) : space;
+
+        memcpy(buf + done, blocks[block_index].data + block_offset, data);
+
+        done += data;
+        block_offset = 0;
+        block_index = blocks[block_index].next_block;
+    }
+
+    return (int)done;
 }
 
 int dm510fs_write(const char *path, const char *buf,
     size_t size, off_t offset, struct fuse_file_info *fi){
-        printf("write: (path=%s)\n", path);
+
         struct dm510_inode *node = &fs_inodes[fi->fh];
 
-        if (offset + size > MAX_FILE_SIZE)
-        size = MAX_FILE_SIZE - offset;
+        if (node->isDir)
+            return -EISDIR;
 
-        memcpy(node->data + offset, buf, size);
+        if (node->first_block == -1){
+            int block_index = freeblock();
+            if (block_index == -1) return -ENOSPC;
+            node->first_block = block_index;
+        } 
 
-        if (offset + size > node->size)
-            node->size = offset + size;
+        size_t block_number = offset / DATA_SECTION;
+        size_t block_offset = offset % DATA_SECTION;
 
-        return (int)size;
+        int block_index = node->first_block;
+
+        for (size_t i = 0; i < block_number; i++){
+            if (blocks[block_index].next_block == -1){
+                int next_block = freeblock();
+                if (next_block < 0) return -ENOSPC;
+                blocks[block_index].next_block = next_block;
+            }
+            block_index = blocks[block_index].next_block;
+        }
+
+        int amount_left = size;
+        int bytes_written = 0;
+
+        while (amount_left > 0) {
+            size_t space = DATA_SECTION - block_offset;
+            size_t data = (amount_left < space) ? amount_left : space;
+
+            memcpy(blocks[block_index].data + block_offset, buf + bytes_written, data);
+
+            bytes_written += data;
+            amount_left -= data;
+            block_offset = 0;
+
+            if (amount_left > 0){
+                if (blocks[block_index].next_block == -1){
+                    int next_block = freeblock();
+                    if (next_block < 0) return -ENOSPC;
+                    blocks[block_index].next_block = next_block;
+                }
+                block_index = blocks[block_index].next_block;
+            }
+        }
+
+        if ((size_t)(offset + bytes_written) > node->size){
+            node->size = offset + bytes_written;
+        }
+
+        return (int)bytes_written;
+
     }
 
 /*
@@ -270,7 +343,7 @@ int dm510fs_mknod(const char *path, mode_t mode, dev_t dev){
 
             fs_inodes[i].size = 0;
 
-            memset(fs_inodes[i].data, 0, MAX_FILE_SIZE);
+            fs_inodes[i].first_block = -1;
 
             break;
         }
@@ -304,7 +377,7 @@ int dm510fs_rmdir(const char *path){
 
     for (int i = 0; i < MAX_FILES; i++){
         if (!fs_inodes[i].used) continue;
-        if (strcmp(fs_inodes[i].parent, node->path)) return -ENOTEMPTY;
+        if (strcmp(fs_inodes[i].parent, node->path) == 0) return -ENOTEMPTY;
     }
 
     memset(node, 0, sizeof(struct dm510_inode));
@@ -312,20 +385,61 @@ int dm510fs_rmdir(const char *path){
     return 0;
 }
 
-int dm510fs_truncate(const char *path, off_t size){
+int dm510fs_truncate(const char *path, off_t new_size){
     struct dm510_inode *node = NULL;
 
     node = find_inode(path);
 
     if(!node) return -ENOENT;
     if(node->isDir) return -EISDIR;
-    if(size > MAX_FILE_SIZE) return -EFBIG;
 
-    if ((size_t)size > node->size)
-        memset(node->data + node->size, 0, size - node->size);
+    size_t blocks_needed = (new_size ? (new_size - 1) / DATA_SECTION : 0);
 
-    node->size = size;
+    //IF INCREASING
+    if ((size_t)new_size > node->size){
+        int block_index = node->first_block;
+        if (block_index == -1){
+            block_index = freeblock();
+            node->first_block = block_index;
+            if (block_index < 0) return -ENOSPC;
+        }
 
+        for (size_t i = 0; i < blocks_needed; i++){
+            if (blocks[block_index].next_block == -1){
+                int next_block = freeblock();
+                if (next_block < 0) return -ENOSPC;
+                blocks[block_index].next_block = next_block;
+            }
+            block_index = blocks[block_index].next_block;
+        }
+    }
+
+    // IF DECREASING
+    else {
+        int block_index = node->first_block;
+        int prev_block = -1;
+
+        for (size_t i = 0; i < blocks_needed; i++){
+            if (block_index == -1) break;
+            prev_block = block_index;
+            block_index = blocks[block_index].next_block;
+        }
+
+        if (prev_block != -1){
+            blocks[prev_block].next_block = -1;
+        } else {
+            node->first_block = -1;
+        }
+
+        while (block_index != -1) {
+            int next_block = blocks[block_index].next_block;
+            blocks[block_index].used = 0;
+            blocks[block_index].next_block = -1;
+            block_index = next_block;
+        }
+    }
+
+    node->size = new_size;
     return 0;
 }
 
@@ -349,10 +463,12 @@ void* dm510fs_init() {
     if (f) {
         memset(fs_inodes, 0, sizeof(fs_inodes));
         fread(fs_inodes, sizeof(fs_inodes), 1, f); //Maybe needs to be fixed
+        fread(blocks, sizeof(blocks), 1, f);
         fclose(f);
         //corruption?? 
     } else {
         memset(fs_inodes, 0, sizeof(fs_inodes));
+        memset(blocks, 0, sizeof(blocks));
 
         fs_inodes[0].used = 1;
         fs_inodes[0].isDir = 1;
@@ -363,6 +479,20 @@ void* dm510fs_init() {
     }
     
     return 0;
+}
+
+static int freeblock(){
+    int res = -ENOSPC;
+    for (int i = 0; i < MAX_BLOCK; i++){
+        if (!blocks[i].used) {
+            res = i;
+            blocks[i].used = 1;
+            blocks[i].next_block = -1;
+            return res;
+        }
+    }
+
+    return res;
 }
 
 static struct dm510_inode *find_inode(const char *path){
@@ -415,6 +545,7 @@ void dm510fs_destroy(void *private_data) {
 
     if (f){
         fwrite(fs_inodes, sizeof(fs_inodes), 1, f);
+        fwrite(blocks, sizeof(blocks), 1, f);
         fclose(f);
     }
 }
