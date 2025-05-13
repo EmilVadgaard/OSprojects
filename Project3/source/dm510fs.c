@@ -17,7 +17,7 @@ int dm510fs_release(const char *path, struct fuse_file_info *fi);
 int dm510fs_unlink(const char *path);
 int dm510fs_rmdir(const char *path);
 int dm510fs_truncate(const char *path, off_t new_size);
-int dm510fs_utime(const char *path, struct utimbuf buf);
+int dm510fs_utime(const char *path, struct utimbuf *buf);
 void* dm510fs_init();
 void dm510fs_destroy(void *private_data);
 
@@ -63,6 +63,9 @@ struct dm510_inode {
 
     char parent[MAX_NAME_LEN]; // Path inode before this one.
 
+    time_t access_time;
+    time_t modification_time;
+
     size_t size;             // amount of bytes in file, 0 if folder.
 
     int first_block; // Data for file
@@ -101,10 +104,14 @@ int dm510fs_getattr( const char *path, struct stat *stbuf ) {
     if (node->isDir){
         stbuf->st_mode = S_IFDIR | 0755;
         stbuf->st_nlink = 2;
+        stbuf->st_atime = node->access_time;
+        stbuf->st_mtime = node->modification_time;
     } else {
         stbuf->st_mode = S_IFREG | 0644;
         stbuf->st_nlink = 1;
         stbuf->st_size = node->size;
+        stbuf->st_atime = node->access_time;
+        stbuf->st_mtime = node->modification_time;
     }
     //printf("succes\n");
 	return 0;
@@ -215,6 +222,8 @@ int dm510fs_read( const char *path, char *buf, size_t size, off_t offset, struct
         block_index = blocks[block_index].next_block;
     }
 
+    node->access_time = time(NULL);
+
     return (int)done;
 }
 
@@ -273,8 +282,11 @@ int dm510fs_write(const char *path, const char *buf,
             node->size = offset + bytes_written;
         }
 
-        return (int)bytes_written;
+        time_t current_time = time(NULL);
+        node->access_time = current_time;
+        node->modification_time = current_time;
 
+        return (int)bytes_written;
     }
 
 /*
@@ -296,6 +308,8 @@ int dm510fs_mkdir(const char *path, mode_t mode){
     //printf("%s\n", name);
     //printf("%s\n", parent);
 
+    if (find_inode(path) != NULL) return -EEXIST;
+
     mode = 755;
 
     //Make directory
@@ -304,6 +318,8 @@ int dm510fs_mkdir(const char *path, mode_t mode){
             memset(&fs_inodes[i], 0, sizeof(struct dm510_inode));
             fs_inodes[i].used = 1;
             fs_inodes[i].isDir = 1;
+            fs_inodes[i].access_time = time(NULL);
+            fs_inodes[i].modification_time = time(NULL);
             //printf("test1 %s\n",name);
             strcpy(fs_inodes[i].name, name);
             //printf("test2 %s\n",path);
@@ -315,6 +331,7 @@ int dm510fs_mkdir(const char *path, mode_t mode){
         }
     }
     free(parent);
+    free(name);
     return 0;
 }
 
@@ -322,6 +339,10 @@ int dm510fs_mkdir(const char *path, mode_t mode){
 int dm510fs_mknod(const char *path, mode_t mode, dev_t dev){
     char *name = get_name(path);
     char *parent = get_parent(path);
+
+    //printf("mknod path = %s", path);
+
+    if (find_inode(path) != NULL) return -EEXIST;
 
     if (!S_ISREG(mode) && !S_ISFIFO(mode))
         return -EINVAL;
@@ -333,6 +354,8 @@ int dm510fs_mknod(const char *path, mode_t mode, dev_t dev){
             memset(&fs_inodes[i], 0, sizeof(struct dm510_inode));
             fs_inodes[i].used = 1;
             fs_inodes[i].isDir = 0;
+            fs_inodes[i].access_time = time(NULL);
+            fs_inodes[i].modification_time = time(NULL);
             //printf("test1 %s\n",name);
             strcpy(fs_inodes[i].name, name);
             //printf("test2 %s\n",path);
@@ -350,6 +373,7 @@ int dm510fs_mknod(const char *path, mode_t mode, dev_t dev){
     }
 
     free(parent);
+    free(name);
 
     return 0;
 }
@@ -360,6 +384,16 @@ int dm510fs_unlink(const char *path){
     node = find_inode(path);
 
     if (!node) return -ENOENT;
+    if (node->isDir) return -EISDIR;
+
+    int block_index = node->first_block;
+
+    while (block_index != -1){
+        int next_block = blocks[block_index].next_block;
+        blocks[block_index].used = 0;
+        blocks[block_index].next_block = -1;
+        block_index = next_block;
+    }
 
     memset(node, 0, sizeof(struct dm510_inode));
     
@@ -443,7 +477,16 @@ int dm510fs_truncate(const char *path, off_t new_size){
     return 0;
 }
 
-int dm510fs_utime(const char *path, struct utimbuf buf){
+int dm510fs_utime(const char *path, struct utimbuf *buf){
+
+    struct dm510_inode *node = NULL;
+
+    node = find_inode(path);
+
+    if(!node) return -ENOENT;
+
+    node->access_time = buf->actime;
+    node->modification_time = buf->modtime;
 
     return 0;
 }
