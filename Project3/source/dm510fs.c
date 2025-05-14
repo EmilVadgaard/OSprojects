@@ -30,7 +30,7 @@ static char *get_parent(const char *path);
 #define MAX_NAME_LEN  64
 #define AVG_FILE_SIZE 4096
 #define BLOCK_SIZE 512
-#define MAX_BLOCK ((MAX_FILES * AVG_FILE_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
+#define MAX_BLOCK 5000 //((MAX_FILES * AVG_FILE_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
 #define DATA_SECTION (BLOCK_SIZE - 2*sizeof(int))
 
 /*
