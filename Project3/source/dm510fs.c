@@ -4,6 +4,8 @@
 #include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <libgen.h>
+
 
 int dm510fs_getattr( const char *, struct stat * );
 int dm510fs_readdir( const char *, void *, fuse_fill_dir_t, off_t, struct fuse_file_info * );
@@ -30,8 +32,12 @@ static char *get_parent(const char *path);
 #define MAX_NAME_LEN  64
 #define AVG_FILE_SIZE 4096
 #define BLOCK_SIZE 512
-#define MAX_BLOCK 5000 //((MAX_FILES * AVG_FILE_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
+#define MAX_BLOCK 10240 //((MAX_FILES * AVG_FILE_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE)
 #define DATA_SECTION (BLOCK_SIZE - 2*sizeof(int))
+
+#define PATH_MAX 1000
+static char disk_path[PATH_MAX];
+
 
 /*
  * See descriptions in fuse source code usually located in /usr/include/fuse/fuse.h
@@ -211,7 +217,7 @@ int dm510fs_read( const char *path, char *buf, size_t size, off_t offset, struct
         block_index = blocks[block_index].next_block;
     }
 
-    while (done < size && block_number != -1){
+    while (done < size && block_index != -1){
         size_t space = DATA_SECTION - block_offset;
         size_t data = (size - done < space) ? (size - done) : space;
 
@@ -531,6 +537,7 @@ static int freeblock(){
             res = i;
             blocks[i].used = 1;
             blocks[i].next_block = -1;
+            memset(blocks[i].data, 0, DATA_SECTION);
             return res;
         }
     }
@@ -596,6 +603,16 @@ void dm510fs_destroy(void *private_data) {
 
 
 int main( int argc, char *argv[] ) {
+    char exe[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n == -1) { perror("readlink"); return 1; }
+    exe[n] = '\0';
+
+    char *dir = dirname(exe); /*<libgen.h>??? */
+
+    snprintf(disk_path, sizeof(disk_path),
+             "%s/fs_data.dat", dir);
+
 	fuse_main( argc, argv, &dm510fs_oper );
 
 	return 0;

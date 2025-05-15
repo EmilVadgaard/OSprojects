@@ -5,7 +5,8 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
-#include <limits.h>
+
+#define MAX_NAME_LEN 4096
 
 static char *read_lorem(const char *path, size_t size);
 
@@ -13,13 +14,13 @@ int main(int argc, char *argv[])
 { 
     if (argc != 2) return -1;
 
-    char mnt[PATH_MAX];
+    char mnt[MAX_NAME_LEN];
     if (!realpath(argv[1], mnt)) return -1;
 
-    char dir_path[PATH_MAX];
-    char file_pathA[PATH_MAX];
-    char file_pathB[PATH_MAX];
-    char file_pathC[PATH_MAX];
+    char dir_path[MAX_NAME_LEN];
+    char file_pathA[MAX_NAME_LEN];
+    char file_pathB[MAX_NAME_LEN];
+    char file_pathC[MAX_NAME_LEN];
 
     strcpy(dir_path,  mnt);      
     strcat(dir_path,  "/dirA");
