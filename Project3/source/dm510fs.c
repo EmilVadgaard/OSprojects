@@ -239,7 +239,7 @@ int dm510fs_write(const char *path, const char *buf,
         struct dm510_inode *node = &fs_inodes[fi->fh];
 
         if (node->isDir)
-            return -EISDIR;
+            return -EISDIR; 
 
         if (node->first_block == -1){
             int block_index = freeblock();
@@ -507,7 +507,7 @@ int dm510fs_utime(const char *path, struct utimbuf *buf){
  */
 void* dm510fs_init() {
     printf("init filesystem\n");
-    FILE *f = fopen("/root/dm510/Project3/fs_data.dat", "rb");
+    FILE *f = fopen(disk_path, "rb");
 
     if (f) {
         memset(fs_inodes, 0, sizeof(fs_inodes));
@@ -591,7 +591,7 @@ static char *get_parent(const char *path){
 void dm510fs_destroy(void *private_data) {
     printf("destroy filesystem\n");
 
-    FILE *f = fopen("/root/dm510/Project3/fs_data.dat", "wb");
+    FILE *f = fopen(disk_path, "wb");
 
     if (f){
         fwrite(fs_inodes, sizeof(fs_inodes), 1, f);
@@ -603,15 +603,9 @@ void dm510fs_destroy(void *private_data) {
 
 
 int main( int argc, char *argv[] ) {
-    char exe[PATH_MAX];
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n == -1) { perror("readlink"); return 1; }
-    exe[n] = '\0';
-
-    char *dir = dirname(exe); /*<libgen.h>??? */
-
-    snprintf(disk_path, sizeof(disk_path),
-             "%s/fs_data.dat", dir);
+    char current_directory[PATH_MAX];
+    getcwd(current_directory, sizeof(current_directory));
+    snprintf(disk_path, sizeof(disk_path), "%s/fs_data.dat", current_directory);
 
 	fuse_main( argc, argv, &dm510fs_oper );
 
