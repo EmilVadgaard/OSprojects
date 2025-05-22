@@ -62,26 +62,25 @@ static struct fuse_operations dm510fs_oper = {
 };
 
 struct dm510_inode {
-    int used;                // 0 if inode not in use
-    int isDir;               // 0 if file, 1 if directory
-    char name[MAX_NAME_LEN]; // File or folder name
-    char path[MAX_NAME_LEN]; // path, fx "/dir1/fileA"
+    int used;                       // 0 if inode not in use
+    int isDir;                      // 0 if file, 1 if directory
+    char name[MAX_NAME_LEN];        // File or folder name
+    char path[MAX_NAME_LEN];        // Path, fx "/dir1/fileA"
 
-    char parent[MAX_NAME_LEN]; // Path inode before this one.
+    char parent[MAX_NAME_LEN];      // Path inode before this one.
 
-    time_t access_time;
-    time_t modification_time;
+    time_t access_time;             // Time of creation
+    time_t modification_time;       // Time of recent change
 
-    size_t size;             // amount of bytes in file, 0 if folder.
+    size_t size;                    // Amount of bytes in file, 0 if folder.
 
     int first_block; // Data for file
-    // maybe more?
 };
 
 struct block{
-    int used;
-    char data[DATA_SECTION];
-    int next_block;
+    int used;                       // 0 if inode not in use
+    char data[DATA_SECTION];        // Data section
+    int next_block;                 // Index for next block
 };  
 
 static struct block blocks[MAX_BLOCK];
@@ -96,30 +95,28 @@ static struct dm510_inode fs_inodes[MAX_FILES];
  * This call is pretty much required for a usable filesystem.
 */
 int dm510fs_getattr( const char *path, struct stat *stbuf ) {
-	//printf("getattr: (path=%s)\n", path);
-
-	memset(stbuf, 0, sizeof(struct stat));
+    memset(stbuf, 0, sizeof(struct stat));
 
     struct dm510_inode *node = NULL;
 
-    node = find_inode(path);
+    node = find_inode(path);        // Locate the specific file / dir
 
-    if (!node) return -ENOENT;
+    if (!node) return -ENOENT;      // If file / directory does not exist
     
 
-    if (node->isDir){
-        stbuf->st_mode = S_IFDIR | 0755;
-        stbuf->st_nlink = 2;
+    if (node->isDir){                                   // If directory
+        stbuf->st_mode = S_IFDIR | 0755;                //    Assign directory permissions
+        stbuf->st_nlink = 2;                            //    1 in + 1 to itself
         stbuf->st_atime = node->access_time;
         stbuf->st_mtime = node->modification_time;
-    } else {
-        stbuf->st_mode = S_IFREG | 0644;
-        stbuf->st_nlink = 1;
+    } else {                                            // If file
+        stbuf->st_mode = S_IFREG | 0644;                //    1 in
+        stbuf->st_nlink = 1;                            //    Size of file
         stbuf->st_size = node->size;
         stbuf->st_atime = node->access_time;
         stbuf->st_mtime = node->modification_time;
     }
-    //printf("succes\n");
+
 	return 0;
 }
 
@@ -147,22 +144,21 @@ int dm510fs_getattr( const char *path, struct stat *stbuf ) {
  * in particular it can return -EBADF if the file handle is invalid, or -ENOENT if you use the path argument and the path doesn't exist.
 */
 int dm510fs_readdir( const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi ) {
-	//printf("readdir: (path=%s)\n", path);
 
     struct dm510_inode *node = NULL;
 
     node = find_inode(path);
 
-    if (!node) return -ENOENT;
-    if (!node->isDir) return -ENOTDIR;
+    if (!node) return -ENOENT;                  // If path is false
+    if (!node->isDir) return -ENOTDIR;          // If path leads to a file
 
 	filler(buf, ".", NULL, 0);
 	filler(buf, "..", NULL, 0);
 	
-    for (int i = 0; i < MAX_FILES; i++){
-        if (!fs_inodes[i].used) continue;
-        if (strcmp(fs_inodes[i].parent, path) == 0){
-            filler(buf, fs_inodes[i].name, NULL, 0);
+    for (int i = 0; i < MAX_FILES; i++){                // Look through all files
+        if (!fs_inodes[i].used) continue;               //    If inode is not in use, skip inode
+        if (strcmp(fs_inodes[i].parent, path) == 0){    //    If parent equals directory
+            filler(buf, fs_inodes[i].name, NULL, 0);    //       Insert onto buffer
         }
     }
 
@@ -177,17 +173,16 @@ int dm510fs_readdir( const char *path, void *buf, fuse_fill_dir_t filler, off_t 
  * Link: https://github.com/libfuse/libfuse/blob/0c12204145d43ad4683136379a130385ef16d166/include/fuse_common.h#L50
 */
 int dm510fs_open( const char *path, struct fuse_file_info *fi ) {
-    printf("open: (path=%s)\n", path);
 
-    for (int i = 0; i < MAX_FILES; i++) {
-        if (!fs_inodes[i].used) continue;
-        if (strcmp(fs_inodes[i].path, path)==0) {
+    for (int i = 0; i < MAX_FILES; i++) {               // Look through all files
+        if (!fs_inodes[i].used) continue;               //    If inode is not in use, skip
+        if (strcmp(fs_inodes[i].path, path)==0) {       //    If file matches given path
 
             if (fs_inodes[i].isDir)
                 return -EISDIR;
 
             fi->fh = i;
-            return 0;                /* success */
+            return 0;                                   // Success
         }
     }
     return -ENOENT;
@@ -198,16 +193,16 @@ int dm510fs_open( const char *path, struct fuse_file_info *fi ) {
  * Returns the number of bytes transferred, or 0 if offset was at or beyond the end of the file. Required for any sensible filesystem.
 */
 int dm510fs_read( const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi ) {
-    printf("read: (path=%s)\n", path);
 
     struct dm510_inode *node = &fs_inodes[fi->fh];
 
-    if (offset >= node->size)
+    if (offset >= node->size)                           // Return 0, as there is nothing to read
         return 0;
 
     if (offset + size > node->size)
         size = node->size - offset;
 
+    /* Offset is within file size range */
     size_t done = 0;
     int block_index = node->first_block;
 
@@ -238,24 +233,25 @@ int dm510fs_write(const char *path, const char *buf,
 
         struct dm510_inode *node = &fs_inodes[fi->fh];
 
-        if (node->isDir)
+        if (node->isDir)                                // Not a writeable object
             return -EISDIR; 
 
-        if (node->first_block == -1){
-            int block_index = freeblock();
-            if (block_index == -1) return -ENOSPC;
+        if (node->first_block == -1){                   // If no block has been allocated already
+            int block_index = freeblock();              //    Create new data block
+            if (block_index == -1) return -ENOSPC;      //    Return error if block wasn't made
             node->first_block = block_index;
         } 
 
-        size_t block_number = offset / DATA_SECTION;
+        /* Allocate data blocks */
+        size_t block_number = offset / DATA_SECTION;    // Calculate amount of blocks needed
         size_t block_offset = offset % DATA_SECTION;
 
         int block_index = node->first_block;
 
-        for (size_t i = 0; i < block_number; i++){
-            if (blocks[block_index].next_block == -1){
-                int next_block = freeblock();
-                if (next_block < 0) return -ENOSPC;
+        for (size_t i = 0; i < block_number; i++){              // Create blocks if needed
+            if (blocks[block_index].next_block == -1){          //    If more blocks is needed
+                int next_block = freeblock();                   //       Create new blocks
+                if (next_block < 0) return -ENOSPC;             //       Return error if block was not made
                 blocks[block_index].next_block = next_block;
             }
             block_index = blocks[block_index].next_block;
@@ -264,6 +260,7 @@ int dm510fs_write(const char *path, const char *buf,
         int amount_left = size;
         int bytes_written = 0;
 
+        /* Write into data blocks */
         while (amount_left > 0) {
             size_t space = DATA_SECTION - block_offset;
             size_t data = (amount_left < space) ? amount_left : space;
@@ -284,6 +281,7 @@ int dm510fs_write(const char *path, const char *buf,
             }
         }
 
+        /* Update inode information */
         if ((size_t)(offset + bytes_written) > node->size){
             node->size = offset + bytes_written;
         }
@@ -307,31 +305,26 @@ int dm510fs_release(const char *path, struct fuse_file_info *fi) {
 //Tjek mappe navnet for sikkerhed
 //tjek om den findes i forvejen.
 int dm510fs_mkdir(const char *path, mode_t mode){
-    //check if path exists
     char *name = get_name(path);
     char *parent = get_parent(path);
-    //printf("%s\n", path);
-    //printf("%s\n", name);
-    //printf("%s\n", parent);
 
-    if (find_inode(path) != NULL) return -EEXIST;
+    if (find_inode(path) != NULL) return -EEXIST;       // Check if directory already exists at location
 
     mode = 755;
 
-    //Make directory
+    /* Making of directory & Filling out inode */
     for (int i = 0; i < MAX_FILES; i++){
-        if (!fs_inodes[i].used){
+        if (!fs_inodes[i].used){                                    // Find a free inode which can be used
             memset(&fs_inodes[i], 0, sizeof(struct dm510_inode));
             fs_inodes[i].used = 1;
             fs_inodes[i].isDir = 1;
             fs_inodes[i].access_time = time(NULL);
             fs_inodes[i].modification_time = time(NULL);
-            //printf("test1 %s\n",name);
+
             strcpy(fs_inodes[i].name, name);
-            //printf("test2 %s\n",path);
+
             strcpy(fs_inodes[i].path, path);
 
-            //printf("test3 %s\n",parent);
             strcpy(fs_inodes[i].parent, parent);
             break;
         }
@@ -341,33 +334,30 @@ int dm510fs_mkdir(const char *path, mode_t mode){
     return 0;
 }
 
-//Tjek længden på fil navn for security.
 int dm510fs_mknod(const char *path, mode_t mode, dev_t dev){
     char *name = get_name(path);
     char *parent = get_parent(path);
 
-    //printf("mknod path = %s", path);
-
     if (find_inode(path) != NULL) return -EEXIST;
 
-    if (!S_ISREG(mode) && !S_ISFIFO(mode))
+    if (!S_ISREG(mode) && !S_ISFIFO(mode))              // Return error if file is not regular, FIFO or pipe.
         return -EINVAL;
 
     mode = 755;
 
+    /* Making of file & Filling out inode */
     for (int i = 0; i < MAX_FILES; i++){
-        if (!fs_inodes[i].used){
+        if (!fs_inodes[i].used){                        // Find the first free inode, which can be used
             memset(&fs_inodes[i], 0, sizeof(struct dm510_inode));
             fs_inodes[i].used = 1;
             fs_inodes[i].isDir = 0;
             fs_inodes[i].access_time = time(NULL);
             fs_inodes[i].modification_time = time(NULL);
-            //printf("test1 %s\n",name);
+
             strcpy(fs_inodes[i].name, name);
-            //printf("test2 %s\n",path);
+
             strcpy(fs_inodes[i].path, path);
 
-            //printf("test3 %s\n",parent);
             strcpy(fs_inodes[i].parent, parent);
 
             fs_inodes[i].size = 0;
@@ -389,11 +379,12 @@ int dm510fs_unlink(const char *path){
 
     node = find_inode(path);
 
-    if (!node) return -ENOENT;
-    if (node->isDir) return -EISDIR;
+    if (!node) return -ENOENT;                  // Return if path leads to nothing
+    if (node->isDir) return -EISDIR;            // Return if not a file
 
     int block_index = node->first_block;
 
+    /* Free up all blocks used by file */
     while (block_index != -1){
         int next_block = blocks[block_index].next_block;
         blocks[block_index].used = 0;
@@ -411,13 +402,13 @@ int dm510fs_rmdir(const char *path){
 
     node = find_inode(path);
 
-    if (!node) return -ENOENT;
-    if (!node->isDir) return -ENOTDIR;
-    if (strcmp("/", path) == 0) return -EBUSY;
+    if (!node) return -ENOENT;                  // Error if path leads to nothing
+    if (!node->isDir) return -ENOTDIR;          // Error if not directory
+    if (strcmp("/", path) == 0) return -EBUSY;  // Error if dir is root
 
-    for (int i = 0; i < MAX_FILES; i++){
-        if (!fs_inodes[i].used) continue;
-        if (strcmp(fs_inodes[i].parent, node->path) == 0) return -ENOTEMPTY;
+    for (int i = 0; i < MAX_FILES; i++){                                        // Check all files
+        if (!fs_inodes[i].used) continue;                                       //    If file / dir is in use, skip
+        if (strcmp(fs_inodes[i].parent, node->path) == 0) return -ENOTEMPTY;    //    If directory is not empty, return error
     }
 
     memset(node, 0, sizeof(struct dm510_inode));
@@ -430,21 +421,21 @@ int dm510fs_truncate(const char *path, off_t new_size){
 
     node = find_inode(path);
 
-    if(!node) return -ENOENT;
-    if(node->isDir) return -EISDIR;
+    if(!node) return -ENOENT;                   // Return if path leads to nothing
+    if(node->isDir) return -EISDIR;             // Return if not a file
 
     size_t blocks_needed = (new_size ? (new_size - 1) / DATA_SECTION : 0);
 
-    //IF INCREASING
+    /* If size increases */
     if ((size_t)new_size > node->size){
         int block_index = node->first_block;
-        if (block_index == -1){
-            block_index = freeblock();
+        if (block_index == -1){                         // If current block has no allocated block
+            block_index = freeblock();                  //    Create new block
             node->first_block = block_index;
             if (block_index < 0) return -ENOSPC;
         }
 
-        for (size_t i = 0; i < blocks_needed; i++){
+        for (size_t i = 0; i < blocks_needed; i++){     // If more blocks are needed, create more until satisfied
             if (blocks[block_index].next_block == -1){
                 int next_block = freeblock();
                 if (next_block < 0) return -ENOSPC;
@@ -454,12 +445,12 @@ int dm510fs_truncate(const char *path, off_t new_size){
         }
     }
 
-    // IF DECREASING
+    /* If size decreases */
     else {
         int block_index = node->first_block;
         int prev_block = -1;
 
-        for (size_t i = 0; i < blocks_needed; i++){
+        for (size_t i = 0; i < blocks_needed; i++){     // Remove blocks until new size has been fulfilled
             if (block_index == -1) break;
             prev_block = block_index;
             block_index = blocks[block_index].next_block;
@@ -506,19 +497,18 @@ int dm510fs_utime(const char *path, struct utimbuf *buf){
  * value provided to fuse_main() / fuse_new().
  */
 void* dm510fs_init() {
-    printf("init filesystem\n");
-    FILE *f = fopen(disk_path, "rb");
+    FILE *f = fopen(disk_path, "rb");               // Retrieve information on file system
 
-    if (f) {
+    if (f) {                                        // If saved information exists
         memset(fs_inodes, 0, sizeof(fs_inodes));
-        fread(fs_inodes, sizeof(fs_inodes), 1, f); //Maybe needs to be fixed
+        fread(fs_inodes, sizeof(fs_inodes), 1, f);
         fread(blocks, sizeof(blocks), 1, f);
         fclose(f);
-        //corruption?? 
-    } else {
+    } else {                                        // If file system is opened for the first time
         memset(fs_inodes, 0, sizeof(fs_inodes));
         memset(blocks, 0, sizeof(blocks));
 
+        /* Creation of root */
         fs_inodes[0].used = 1;
         fs_inodes[0].isDir = 1;
 
@@ -530,9 +520,12 @@ void* dm510fs_init() {
     return 0;
 }
 
+/*
+ * Finds the first free block available to give
+ */
 static int freeblock(){
     int res = -ENOSPC;
-    for (int i = 0; i < MAX_BLOCK; i++){
+    for (int i = 0; i < MAX_BLOCK; i++){            // Find a free block to give
         if (!blocks[i].used) {
             res = i;
             blocks[i].used = 1;
@@ -545,10 +538,13 @@ static int freeblock(){
     return res;
 }
 
+/*
+ * Returns inode of a given path
+ */
 static struct dm510_inode *find_inode(const char *path){
     struct dm510_inode *node = NULL;
 
-    for (int i = 0; i < MAX_FILES; i++){
+    for (int i = 0; i < MAX_FILES; i++){            // Find specific file / dir matching path
         if (!fs_inodes[i].used) continue;
 
         if (strcmp(fs_inodes[i].path, path) == 0){
@@ -560,9 +556,12 @@ static struct dm510_inode *find_inode(const char *path){
     return node;
 }
 
+/*
+ * Retrieves name part of a path
+ */
 static char *get_name(const char *path)
 {
-    const char *slash = strrchr(path, '/');
+    const char *slash = strrchr(path, '/');         // Last part of path
 
     const char *name = (slash ? slash + 1 : path);
 
@@ -572,6 +571,9 @@ static char *get_name(const char *path)
     return strdup(name);
 }
 
+/*
+ * Finds parent, according to given path
+ */
 static char *get_parent(const char *path){
     const char *slash = strrchr(path, '/');
     if (slash == path)
@@ -591,9 +593,9 @@ static char *get_parent(const char *path){
 void dm510fs_destroy(void *private_data) {
     printf("destroy filesystem\n");
 
-    FILE *f = fopen(disk_path, "wb");
+    FILE *f = fopen(disk_path, "wb");               // Open file in which file system information is stored
 
-    if (f){
+    if (f){                                         // Write over all information to file
         fwrite(fs_inodes, sizeof(fs_inodes), 1, f);
         fwrite(blocks, sizeof(blocks), 1, f);
         fclose(f);
